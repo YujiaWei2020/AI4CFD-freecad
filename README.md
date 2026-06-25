@@ -1,18 +1,41 @@
-
-
 # AI4CFD-freecad
 
-## Physics AI Demo: hydrodynamic analysis of pipe 
+AI-driven design space search with CFD simulation, built on top of FreeCAD. Automatically explores design parameters and uses physics AI to find optimal geometries through hydrodynamic analysis.
 
+---
+
+## Demo
+
+### Physics AI: Hydrodynamic Analysis of Pipe
 
 https://github.com/user-attachments/assets/64764b34-4392-4d9d-af45-4846d47e28a8
 
+### Design Space Search
 
+<!-- Upload Design space search.mp4 via the GitHub editor to embed it here -->
 
+---
 
 ## Usage
-1. download 
 
+1. Clone the repository
+   ```bash
+   git clone https://github.com/YujiaWei2020/AI4CFD-freecad.git
+   ```
+2. Install requirements (see below)
+3. Open FreeCAD and load the macro/script
+4. Run the design space search
 
-## Requirement
+---
 
+## Requirements
+
+- [FreeCAD](https://www.freecad.org/) 0.21+
+- Python 3.x
+- <!-- add your Python dependencies here, e.g. numpy, scipy, torch -->
+
+---
+
+## License
+
+<!-- Add license info here -->
