@@ -2,4 +2,4 @@
 
 ## Design Space Search
 
-https://github.com/YujiaWei2020/AI4CFD-freecad/raw/main/Design%20space%20search.mp4
+<!-- VIDEO PLACEHOLDER — replace this comment with the link GitHub generates after uploading the video -->
