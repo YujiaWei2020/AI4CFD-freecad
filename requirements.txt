@@ -1,0 +1,39 @@
+# --- Core Scientific ---
+numpy>=1.24,<2.0
+scipy>=1.10.0
+pandas>=2.0.0
+einops>=0.6.0
+
+# --- PyTorch (install manually with CUDA index, see above) ---
+# torch>=2.0.0
+# torchvision>=0.15.0
+# causal-conv1d>=1.2.0
+
+
+# --- PointMamba Dependencies ---
+timm>=0.6.0
+tensorboardX
+
+# --- Visualization & VTK ---
+pyvista>=0.40.0
+vtk>=9.0.0
+matplotlib>=3.6.0
+
+# --- Machine Learning ---
+scikit-learn>=1.3.0
+wandb>=0.17.0
+
+# --- Utilities ---
+tqdm>=4.60.0
+boto3>=1.20.0
+packaging
+ninja
+wheel
+scikit-build-core
+cmake
+
+# --- Development ---
+ipython>=8.0.0
+jupyterlab>=4.0.0
+
+
