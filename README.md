@@ -18,6 +18,10 @@ https://github.com/user-attachments/assets/64764b34-4392-4d9d-af45-4846d47e28a8
 
 ## Usage
 
+STEP TO STEP of creating your first digital twin system:
+https://www.youtube.com/watch?v=0pIovv9IgwQ
+
+
 1. Clone the repository
    ```bash
    git clone https://github.com/YujiaWei2020/AI4CFD-freecad.git
