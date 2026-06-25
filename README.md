@@ -30,9 +30,9 @@ https://github.com/user-attachments/assets/64764b34-4392-4d9d-af45-4846d47e28a8
 
 ## Requirements
 
-- [FreeCAD](https://www.freecad.org/) 0.21+
-- Python 3.x
-- <!-- add your Python dependencies here, e.g. numpy, scipy, torch -->
+   ```bash
+   pip -r requirement.txt
+   ```
 
 ---
 
