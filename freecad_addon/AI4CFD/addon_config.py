@@ -131,26 +131,8 @@ if not _NATIVE_PYTHON:
     except ImportError:
         pass
 
-PREVIEW_STEP = os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "ai4cfd_preview.step") \
-    if _ON_WINDOWS else os.path.expanduser("~/.ai4cfd_preview.step")
-_wsl_step_out = PREVIEW_STEP
-
-# Always use the original project path — not the AppData copy — so relative imports work
-_helper_path = _WSL_PROJECT + "/freecad_addon/AI4CFD/helpers/generate_step.py"
-
-_SIM_HELPER            = _WSL_PROJECT + "/freecad_addon/AI4CFD/helpers/run_simulation.py"
 _PARAMETRIC_SIM_HELPER = _WSL_PROJECT + "/freecad_addon/AI4CFD/helpers/run_parametric_sim.py"
 _GENERIC_SIM_HELPER    = _WSL_PROJECT + "/freecad_addon/AI4CFD/helpers/run_generic_sim.py"
-
-
-def build_cmd(geo_type: str, params_json: str) -> list:
-    """Return the subprocess command list for geometry generation."""
-    return [
-        *_PY_BASE, _helper_path,
-        "--type",   geo_type,
-        "--params", params_json,
-        "--output", _wsl_step_out,
-    ]
 
 
 def build_generic_sim_cmd(case_name: str, params_json: str,
@@ -192,21 +174,4 @@ def build_parametric_sim_cmd(case_dir: str, template_dir: str,
         base += ["--inference-prep"]
     elif mesh_only:
         base += ["--mesh-only"]
-    return base
-
-
-def build_sim_cmd(params_json: str, num_cores: int = 4,
-                  max_iterations: int = 1000, mesh_scale_factor: float = 0.5,
-                  module: str = "train", case_dir: str = None) -> list:
-    """Return the subprocess command list for running an OpenFOAM simulation."""
-    base = [
-        *_PY_BASE, _SIM_HELPER,
-        "--params",            params_json,
-        "--num-cores",         str(num_cores),
-        "--max-iterations",    str(max_iterations),
-        "--mesh-scale-factor", str(mesh_scale_factor),
-        "--module",            module,
-    ]
-    if case_dir:
-        base += ["--case-dir", case_dir]
     return base

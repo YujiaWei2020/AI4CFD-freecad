@@ -49,17 +49,14 @@ class AI4CFDWorkbench(FreeCADGui.Workbench):
                 build_tree(doc)
                 FreeCAD.Console.PrintMessage("AI4CFD model tree initialised.\n")
 
-        from commands.bend_pipe_cmd        import BendPipeCommand
         from commands.parametric_study_cmd import BendPipeParametricCommand
 
         FreeCADGui.addCommand("AI4CFD_GeometryContainer", GeometryContainerCmd())
-        FreeCADGui.addCommand("AI4CFD_BendPipe",           BendPipeCommand())
         FreeCADGui.addCommand("AI4CFD_BendPipeParametric", BendPipeParametricCommand())
 
         self.appendToolbar("AI4CFD", ["AI4CFD_GeometryContainer"])
 
-        self.appendMenu("AI4CFD", ["AI4CFD_GeometryContainer",
-                                   "AI4CFD_BendPipe"])
+        self.appendMenu("AI4CFD", ["AI4CFD_GeometryContainer"])
         self.appendMenu(["AI4CFD", "Parametric Studies"],
                         ["AI4CFD_BendPipeParametric"])
 
