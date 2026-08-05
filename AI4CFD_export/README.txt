@@ -31,7 +31,8 @@ Install on a Windows machine that already has FreeCAD + CfdOF + OpenFOAM set up
    to build the model tree.
 
 If install.bat can't auto-detect Python or FreeCAD, it will tell you exactly what
-to fill in manually (it never guesses silently).
+to fill in manually. If python is not detected, download 3.12.X and add it to path.
+Reinstall everything.
 
 Install on macOS/Linux, or if you'd rather do it by hand
 -----------------------------------------------------------
