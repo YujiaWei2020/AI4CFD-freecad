@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Background -->
+  <rect width="64" height="64" rx="9" fill="#1a237e"/>
+
+  <!-- Chart area -->
+  <rect x="7" y="6" width="50" height="40" rx="3" fill="#1c313a"/>
+
+  <!-- Faint grid -->
+  <line x1="7"  y1="19" x2="57" y2="19" stroke="#546e7a" stroke-width="0.6" opacity="0.6"/>
+  <line x1="7"  y1="32" x2="57" y2="32" stroke="#546e7a" stroke-width="0.6" opacity="0.6"/>
+  <line x1="24" y1="6"  x2="24" y2="46" stroke="#546e7a" stroke-width="0.6" opacity="0.4"/>
+  <line x1="40" y1="6"  x2="40" y2="46" stroke="#546e7a" stroke-width="0.6" opacity="0.4"/>
+
+  <!-- Train loss curve — blue, steeply descending then flattening -->
+  <polyline
+    points="9,10 17,18 25,27 33,32 41,35 49,36 56,37"
+    fill="none" stroke="#42a5f5" stroke-width="2.4"
+    stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Eval loss curve — red, slightly above train -->
+  <polyline
+    points="9,13 17,22 25,31 33,36 41,38 49,39 56,40"
+    fill="none" stroke="#ef5350" stroke-width="2.4"
+    stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Axes -->
+  <line x1="7" y1="6"  x2="7"  y2="46" stroke="#90a4ae" stroke-width="1.6" stroke-linecap="round"/>
+  <line x1="7" y1="46" x2="57" y2="46" stroke="#90a4ae" stroke-width="1.6" stroke-linecap="round"/>
+
+  <!-- Legend row -->
+  <rect x="7"  y="51" width="8" height="3" rx="1.5" fill="#42a5f5"/>
+  <text x="17" y="55" font-family="Arial,sans-serif" font-size="7.5" fill="#cfd8dc">Train</text>
+  <rect x="36" y="51" width="8" height="3" rx="1.5" fill="#ef5350"/>
+  <text x="46" y="55" font-family="Arial,sans-serif" font-size="7.5" fill="#cfd8dc">Val</text>
+</svg>
