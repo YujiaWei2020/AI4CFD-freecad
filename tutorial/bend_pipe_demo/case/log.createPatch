@@ -1,0 +1,97 @@
+/*---------------------------------------------------------------------------*\
+| =========                 |                                                 |
+| \\      /  F ield         | OpenFOAM: The Open Source CFD Toolbox           |
+|  \\    /   O peration     | Version:  2212                                  |
+|   \\  /    A nd           | Website:  www.openfoam.com                      |
+|    \\/     M anipulation  |                                                 |
+\*---------------------------------------------------------------------------*/
+Build  : 34e226dfe3-20211220 OPENFOAM=2212 version=v2212
+Arch   : "LSB;label=32;scalar=64"
+Exec   : C:\Users\yujia\AppData\Roaming\ESI-OpenCFD\OpenFOAM\v2212\\msys64\home\ofuser\OpenFOAM\OpenFOAM-v2212\platforms\win64MingwDPInt32Opt\bin\createPatch.exe -overwrite
+Date   : May 25 2026
+Time   : 15:42:03
+Host   : YUJIA
+PID    : 44704
+I/O    : uncollated
+Case   : E:/cfd/freecad_ai4cfd/bend_pipe_demo/case
+nProcs : 1
+trapFpe: Floating point exception trapping enabled (FOAM_SIGFPE).
+fileModificationChecking : Monitoring run-time modified files using timeStampMaster (fileModificationSkew 5, maxFileModificationPolls 20)
+allowSystemOperations : Allowing user-supplied system call operations
+
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+Create time
+
+Create mesh for time = 0
+
+Reading "system/createPatchDict"
+
+--> FOAM Warning : 
+    From Foam::labelHashSet Foam::polyBoundaryMesh::patchSet(const Foam::UList<Foam::wordRe>&, bool, bool) const
+    in file meshes/polyMesh/polyBoundaryMesh/polyBoundaryMesh.C at line 910
+    Cannot find any patch or group names matching patch_0_0
+
+
+Adding patches to mesh region0
+
+Adding new patch inlet from 
+{
+    type            patch;
+    nFaces          0;
+    startFace       0;
+}
+
+Adding new patch outlet from 
+{
+    type            patch;
+    nFaces          0;
+    startFace       0;
+}
+
+Adding new patch wall from 
+{
+    type            wall;
+    nFaces          0;
+    startFace       0;
+}
+
+Adding new patch defaultFaces from 
+{
+    type            wall;
+    nFaces          0;
+    startFace       0;
+}
+
+
+
+
+Repatching mesh region0
+
+Moving faces from patch patch_1_0 to patch 4
+Moving faces from patch patch_2_0 to patch 5
+Moving faces from patch patch_3_1 to patch 6
+--> FOAM Warning : 
+    From void Foam::polyBoundaryMesh::calcGroupIDs() const
+    in file meshes/polyMesh/polyBoundaryMesh/polyBoundaryMesh.C at line 100
+    Removed group 'wall' which clashes with patch 6 of the same name.
+--> FOAM Warning : 
+    From Foam::labelHashSet Foam::polyBoundaryMesh::patchSet(const Foam::UList<Foam::wordRe>&, bool, bool) const
+    in file meshes/polyMesh/polyBoundaryMesh/polyBoundaryMesh.C at line 910
+    Cannot find any patch or group names matching patch_0_0
+Moving faces from patch patch_0_1 to patch 7
+Doing topology modification to order faces.
+
+Not synchronising points.
+
+Removing patches with no faces in them.
+
+Removed zero-sized patch patch_0_1 type wall at position 0
+Removed zero-sized patch patch_1_0 type wall at position 1
+Removed zero-sized patch patch_2_0 type wall at position 2
+Removed zero-sized patch patch_3_1 type wall at position 3
+
+
+Writing repatched mesh region0 to 0
+
+End
+
