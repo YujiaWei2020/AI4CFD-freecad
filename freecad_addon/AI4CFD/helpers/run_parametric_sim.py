@@ -26,7 +26,7 @@ import json
 import os
 import shutil
 import subprocess
-import sys
+import sys 
 
 _OF_SOURCE = "/usr/lib/openfoam/openfoam2212/etc/bashrc"
 
@@ -948,6 +948,150 @@ def _patch_inlet_velocity(solv_dir: str, params: dict) -> None:
           f"({nx:.6g} {ny:.6g} {nz:.6g}) m/s", flush=True)
 
 
+def _patch_inlet_flow_rate(solv_dir: str, params: dict) -> None:
+    """Rewrite the inlet's volumetricFlowRate in 0/U for flowRateInletVelocity BCs.
+
+    CfdOF's 'volumetricFlowRateInlet' subtype writes the inlet patch as:
+        type                flowRateInletVelocity;
+        volumetricFlowRate  constant 0.001;
+        value               $internalField;
+    This is a completely different mechanism from a fixed-velocity inlet: the
+    driving number is 'volumetricFlowRate', not a 'uniform (Ux Uy Uz)' vector,
+    so _patch_inlet_velocity() never touches it. Without this, every case in a
+    volumetric-rate parametric sweep silently keeps the template's flow rate.
+
+    Velocity source (priority order), mirroring _patch_inlet_velocity:
+      1. '_inlet_volumetric_flow_rate_m3s' — set by FreeCAD export from
+         expression-linked VolFlowRate (already in m^3/s).
+      2. Any param key matching a flow-rate regex (assumed already m^3/s —
+         unlike velocity, there's no reliable reference magnitude in 0/U to
+         auto-detect alternate units against).
+    """
+    import re as _re
+
+    if "_inlet_volumetric_flow_rate_m3s" in params:
+        rate_m3s = float(params["_inlet_volumetric_flow_rate_m3s"])
+        src = "_inlet_volumetric_flow_rate_m3s"
+    else:
+        rate_key = next(
+            (k for k in params if _re.search(r'flow.?rate|volumetric', k, _re.IGNORECASE)),
+            None,
+        )
+        if rate_key is None:
+            return
+        rate_m3s = float(params[rate_key])
+        src = rate_key
+
+    u_path = os.path.join(solv_dir, "0", "U")
+    if not os.path.isfile(u_path):
+        print("[AI4CFD] 0/U not found — flow-rate patch skipped", flush=True)
+        return
+
+    with open(u_path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+
+    _RATE_RE = _re.compile(
+        r'(volumetricFlowRate\s+constant\s+)(-?[\d.eE+\-]+)(\s*;)')
+    count = [0]
+
+    def _replace(mo):
+        count[0] += 1
+        return f"{mo.group(1)}{rate_m3s:.6g}{mo.group(3)}"
+
+    new_text = _RATE_RE.sub(_replace, text)
+
+    if count[0] == 0:
+        print(f"[AI4CFD] 0/U: no volumetricFlowRate entry found — "
+              f"'{src}' not applied (inlet BC may not be flowRateInletVelocity)",
+              flush=True)
+        return
+
+    with open(u_path, "w", encoding="utf-8") as fh:
+        fh.write(new_text)
+    print(f"[AI4CFD] Patching 0/U volumetricFlowRate from '{src}': "
+          f"{rate_m3s:.6g} m^3/s ({count[0]} patch(es))", flush=True)
+
+
+def _reset_stale_nonuniform_fields(zero_dir: str) -> None:
+    """Collapse baked-in nonuniform 0/<field> data to a representative uniform value.
+
+    A template built by pointing 'OF template' at an already-solved CfdOF case
+    (see the panel's own tip: "run your case once via CfdOF, then paste that
+    case path here") carries the solved internalField / boundary 'value'
+    entries verbatim as 'nonuniform List<...> N (...)'. That N is the face/cell
+    count of the ORIGINAL mesh. Copied into a parametric case whose geometry
+    (and therefore mesh) differs, it either fails to read (size mismatch) or
+    silently seeds the new case with wrong per-cell data — and since it isn't
+    a plain 'uniform (x y z)' vector, _patch_inlet_velocity's direction lookup
+    on internalField also silently no-ops when this is present.
+
+    Collapsing each nonuniform block to its first data row keeps a reasonable
+    representative direction/magnitude (rather than an arbitrary zero) for
+    downstream velocity/flow-rate patching and potentialFoam -initialiseUBCs
+    to build on, while being valid for any mesh size.
+    """
+    import re as _re
+
+    if not os.path.isdir(zero_dir):
+        return
+
+    _BLOCK_RE = _re.compile(
+        r'(internalField|value)(\s+)nonuniform\s+List<(\w+)>\s*'
+        r'\d+\s*\(\s*(.*?)\)\s*;',
+        _re.DOTALL,
+    )
+    _FIRST_VEC_RE = _re.compile(
+        r'\(\s*(-?[\d.eE+\-]+)\s+(-?[\d.eE+\-]+)\s+(-?[\d.eE+\-]+)\s*\)')
+    _FIRST_SCALAR_RE = _re.compile(r'(-?[\d.eE+\-]+)')
+
+    for fname in os.listdir(zero_dir):
+        fpath = os.path.join(zero_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        try:
+            text = open(fpath, encoding="utf-8", errors="replace").read()
+        except Exception:
+            continue
+        if "nonuniform" not in text:
+            continue
+
+        def _replace(mo):
+            keyword, sep, ftype, body = mo.group(1), mo.group(2), mo.group(3), mo.group(4)
+            if ftype == "scalar":
+                m = _FIRST_SCALAR_RE.search(body)
+                repl = m.group(1) if m else "0"
+            else:
+                m = _FIRST_VEC_RE.search(body)
+                repl = f"({m.group(1)} {m.group(2)} {m.group(3)})" if m else "(0 0 0)"
+            return f"{keyword}{sep}uniform {repl};"
+
+        new_text = _BLOCK_RE.sub(_replace, text)
+        if new_text != text:
+            with open(fpath, "w", encoding="utf-8") as fh:
+                fh.write(new_text)
+            print(f"[AI4CFD] 0/{fname}: collapsed stale nonuniform field(s) to "
+                  f"uniform (mesh-size independent)", flush=True)
+
+
+def _has_potential_flow(solv_dir: str) -> bool:
+    """Return True if system/fvSolution has a potentialFlow{} sub-dict.
+
+    CfdOF-generated cases always include this and rely on it via
+    'potentialFoam -initialiseUBCs' in their own Allrun script (see e.g.
+    cfd_models/bend_pipe_demo/case/Allrun). Gate on its presence so this
+    doesn't break plain/non-CfdOF templates that never had it.
+    """
+    import re as _re
+    path = os.path.join(solv_dir, "system", "fvSolution")
+    if not os.path.isfile(path):
+        return False
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except Exception:
+        return False
+    return bool(_re.search(r'\bpotentialFlow\s*\{', text))
+
+
 def _patch_meshdict_surface_file(mesh_dir: str) -> None:
     """Generate cfmesh_body.stl and update meshDict to use it.
 
@@ -1051,6 +1195,11 @@ def _run_split(case_dir: str, template_dir: str, num_cores: int,
     _copy_template_files(tmpl_mesh, mesh_dir)
     print("[AI4CFD] Copying template case…", flush=True)
     _copy_template_files(tmpl_case, solv_dir)
+
+    # Template's 0/ may carry a previously-solved case's nonuniform field data
+    # (sized for a different mesh) — collapse it before anything downstream
+    # (BC patching, potentialFoam) relies on 0/ being mesh-size independent.
+    _reset_stale_nonuniform_fields(os.path.join(solv_dir, "0"))
 
     # Patch locationInMesh so snappyHexMesh starts inside the new pipe geometry
     _patch_snappy_location(case_dir, mesh_dir)
@@ -1181,12 +1330,27 @@ def _run_split(case_dir: str, template_dir: str, num_cores: int,
     else:
         print("[AI4CFD] No createPatchDict — skipping createPatch", flush=True)
 
-    # ── 10b. Patch inlet velocity from expression-linked CfdOF BC value ───────
+    # ── 10b. Patch inlet velocity / flow rate from expression-linked CfdOF BC
+    #        values (fallback path only — the CfdOF full-case write already
+    #        embeds the correct value when that path succeeds).
     _patch_inlet_velocity(solv_dir, params or {})
+    _patch_inlet_flow_rate(solv_dir, params or {})
 
     # ── 11. renumberMesh — improve solver convergence ─────────────────────────
     if _has(solv_dir, "system", "decomposeParDict") or True:
         _run("renumberMesh -overwrite", solv_dir)   # non-fatal
+
+    # ── 11b. potentialFoam -initialiseUBCs — initialise U/p from a potential-
+    #         flow solve, exactly as CfdOF's own Allrun does (see e.g.
+    #         cfd_models/bend_pipe_demo/case/Allrun). Skipped only in pure
+    #         mesh-only mode, where nothing downstream reads the field.
+    if mesh_only and not inference_prep:
+        print("[AI4CFD] mesh-only mode — skipping potentialFoam init.", flush=True)
+    elif _has_potential_flow(solv_dir):
+        _require("potentialFoam -initialiseUBCs -pName p", solv_dir)
+    else:
+        print("[AI4CFD] No potentialFlow{} in fvSolution — skipping potentialFoam init.",
+              flush=True)
 
     # ── 12. Solver (runs in case/) ────────────────────────────────────────────
     if mesh_only or inference_prep:
@@ -1281,8 +1445,15 @@ def _run_pipeline_only_split(case_dir: str, num_cores: int,
     _run("renumberMesh -overwrite", solv_dir)
 
     if mesh_only:
-        print("[AI4CFD] mesh-only mode — skipping solver.", flush=True)
+        print("[AI4CFD] mesh-only mode — skipping potentialFoam init and solver.",
+              flush=True)
         return
+
+    if _has_potential_flow(solv_dir):
+        _require("potentialFoam -initialiseUBCs -pName p", solv_dir)
+    else:
+        print("[AI4CFD] No potentialFlow{} in fvSolution — skipping potentialFoam init.",
+              flush=True)
 
     solver = _read_solver(solv_dir)
     print(f"[AI4CFD] Solver: {solver}", flush=True)
@@ -1298,7 +1469,7 @@ def _run_pipeline_only_split(case_dir: str, num_cores: int,
 # ── Single-folder layout ──────────────────────────────────────────────────────
 
 def _run_single(case_dir: str, template_dir: str, num_cores: int,
-                mesh_only: bool = False) -> None:
+                mesh_only: bool = False, params: dict = None) -> None:
     our_trisurf = os.path.join(case_dir, "constant", "triSurface")
     geom_bytes  = None
     if os.path.isdir(our_trisurf):
@@ -1313,6 +1484,11 @@ def _run_single(case_dir: str, template_dir: str, num_cores: int,
 
     print("[AI4CFD] Copying template config files…", flush=True)
     _copy_template_files(template_dir, case_dir)
+
+    # See _run_split: a template copied from an already-solved case carries
+    # mesh-size-dependent nonuniform field data that must not survive into a
+    # case with different geometry.
+    _reset_stale_nonuniform_fields(os.path.join(case_dir, "0"))
 
     if geom_bytes:
         name = main_stl or "geometry.stl"
@@ -1355,11 +1531,22 @@ def _run_single(case_dir: str, template_dir: str, num_cores: int,
     if _has(case_dir, "system", "createPatchDict"):
         _require("createPatch -overwrite", case_dir)
 
+    # Patch inlet velocity / flow rate from expression-linked CfdOF BC values
+    _patch_inlet_velocity(case_dir, params or {})
+    _patch_inlet_flow_rate(case_dir, params or {})
+
     _run("renumberMesh -overwrite", case_dir)
 
     if mesh_only:
-        print("[AI4CFD] mesh-only mode — skipping solver.", flush=True)
+        print("[AI4CFD] mesh-only mode — skipping potentialFoam init and solver.",
+              flush=True)
         return
+
+    if _has_potential_flow(case_dir):
+        _require("potentialFoam -initialiseUBCs -pName p", case_dir)
+    else:
+        print("[AI4CFD] No potentialFlow{} in fvSolution — skipping potentialFoam init.",
+              flush=True)
 
     solver = _read_solver(case_dir)
     print(f"[AI4CFD] Solver: {solver}", flush=True)
@@ -1424,7 +1611,8 @@ def main() -> None:
                        params=args.params)
         else:
             print("[AI4CFD] Layout: single-folder", flush=True)
-            _run_single(case_dir, template_dir, args.num_cores, mesh_only=mesh_only)
+            _run_single(case_dir, template_dir, args.num_cores, mesh_only=mesh_only,
+                        params=args.params)
 
     print(f"[AI4CFD] DONE: {case_dir}", flush=True)
 

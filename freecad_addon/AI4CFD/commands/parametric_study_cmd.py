@@ -180,6 +180,33 @@ def _read_cfdof_inlet_velocity(doc) -> float | None:
     return None
 
 
+def _read_cfdof_inlet_flow_rate(doc) -> float | None:
+    """Return the current inlet volumetric flow rate in m^3/s from a CfdOF BC object.
+
+    Mirrors _read_cfdof_inlet_velocity but for the VolFlowRate property, which
+    CfdOF uses for the 'volumetricFlowRateInlet' BoundarySubType (written to
+    OpenFOAM as 'type flowRateInletVelocity; volumetricFlowRate constant <v>;').
+    The property exists on every inlet BC object regardless of which subtype is
+    active, so this is safe to read unconditionally — same as VelocityMag.
+
+    Returns None if no inlet BC object is found.
+    """
+    for obj in doc.Objects:
+        if getattr(obj, "BoundaryType", "") != "inlet":
+            continue
+        rate = getattr(obj, "VolFlowRate", None)
+        if rate is None:
+            continue
+        try:
+            return float(rate.getValueAs("m^3/s"))
+        except AttributeError:
+            try:
+                return float(rate)
+            except Exception:
+                pass
+    return None
+
+
 def _import_cfdof(name: str):
     """Import a CfdOF module by trying 'CfdOF.<name>' then '<name>' directly."""
     for full in (f"CfdOF.{name}", name):
@@ -1617,13 +1644,27 @@ class CFDParametricPanel:
                         f"{os.path.basename(case_dir)} [{mode}]"
                     )
 
-                # 4. Read expression-linked CfdOF inlet velocity for params.json tracking.
+                # 4. Read expression-linked CfdOF inlet velocity / flow rate for
+                #    params.json tracking (and for run_parametric_sim.py's
+                #    fallback 0/U patching when the CfdOF full-case write above
+                #    did not happen).
                 cfdof_vel = _read_cfdof_inlet_velocity(doc)
                 if cfdof_vel is not None:
                     params["_inlet_velocity_ms"] = cfdof_vel
                     FreeCAD.Console.PrintMessage(
                         f"AI4CFD: CfdOF inlet velocity = {cfdof_vel:.4g} m/s "
                         f"(case {i+1})\n")
+
+                # VolFlowRate exists (defaulted to 0) on every inlet BC object
+                # regardless of subtype, so only record it when non-zero —
+                # otherwise every velocity-based study would pick up a spurious
+                # "_inlet_volumetric_flow_rate_m3s": 0 entry.
+                cfdof_flow_rate = _read_cfdof_inlet_flow_rate(doc)
+                if cfdof_flow_rate is not None and abs(cfdof_flow_rate) > 1e-12:
+                    params["_inlet_volumetric_flow_rate_m3s"] = cfdof_flow_rate
+                    FreeCAD.Console.PrintMessage(
+                        f"AI4CFD: CfdOF inlet volumetric flow rate = "
+                        f"{cfdof_flow_rate:.6g} m^3/s (case {i+1})\n")
 
                 # 5. Save parameter JSON and mesh metadata alongside
                 with open(os.path.join(case_dir, "params.json"), "w") as fh:
