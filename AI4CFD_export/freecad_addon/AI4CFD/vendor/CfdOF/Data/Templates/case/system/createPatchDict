@@ -1,0 +1,62 @@
+%[_header%]
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      createPatchDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+pointSync false;
+
+// Patches to create.
+patches
+(
+%{%(createPatches%)
+%{%(boundaries/%(0%)/BoundaryType%)
+%:default
+    {
+        name %(0%);
+        patchInfo
+        {
+            type %(createPatches/%(0%)/PatchType%);
+        }
+        constructFrom patches;
+        patches ( %(createPatches/%(0%)/PatchNamesList%) );
+    }
+%}
+%}
+%{%(createPatchesFromSnappyBaffles%)
+%:True
+
+%{%(createPatchesSnappyBaffles%)
+%[system/_createPatch_snappybaffles%]
+%}
+%}
+%{%(createPatchesForPeriodics%)
+%:True
+
+%{%(createPeriodics%)
+%[system/_createPatch_periodics%]
+%}
+%}
+%{%(dynamicMeshEnabled%)
+%:True
+
+    {
+        // Empty patch for temporary storage during
+        // parallel redistribution using Foundation
+        name redistributeHelper;
+        patchInfo
+        {
+            #include "helperPatchType";
+        }
+        constructFrom patches;
+        patches ();
+    }
+%}
+);
+
+
+// ************************************************************************* //

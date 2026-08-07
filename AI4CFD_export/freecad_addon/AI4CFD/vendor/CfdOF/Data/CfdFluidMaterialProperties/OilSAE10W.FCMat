@@ -1,0 +1,12 @@
+; SPDX-FileCopyrightText: 2016 CSIR, South Africa
+; SPDX-FileCopyrightText: 2021 Oliver Oxtoby
+; OilSAE10W
+;
+; FreeCAD Material card: see https://www.freecad.org/wiki/Material
+
+[FCMat]
+Name = OilSAE10W
+Type = Isothermal
+Description = SAE 10W oil at 20 Degrees Celsius and 1 atm
+Density = 870 kg/m^3
+DynamicViscosity = 1.04e-1 kg/m/s

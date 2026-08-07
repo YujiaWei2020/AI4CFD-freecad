@@ -28,30 +28,9 @@ TARGET_RESULT_FIELD = "Full-Field"  # "Boundary" or "Full-Field"
 # if TARGET_RESULT_FIELD = "Boundary", then select which boundary for training
 TARGET_RESULT_NAME = "airfoil"  # "airfoil" or "pipe" or "tank"
 
-# --- Gradient fields ---
-# True  → grad(U)/grad(p) must be listed in TRAIN_FIELDS; they are added to the
-#         model input as extra per-point features (see AUX_INPUT_FIELDS).
-# False → grad(U)/grad(p) must NOT be listed in TRAIN_FIELDS.
-# Mismatches between USE_GRADIENT and TRAIN_FIELDS raise an error below.
-USE_GRADIENT    = False
-GRADIENT_FIELDS = ["grad(U)", "grad(p)"]
-
 # --- Fields to train and predict ---
 TRAIN_FIELDS   = ["U", "p"]  # "k", "omega", "p", "p_rgh", "alpha.water"
 PREDICT_FIELDS = ["U", "p"]  # "k", "omega", "p", "p_rgh", "alpha.water"
-
-# --- Validate USE_GRADIENT / TRAIN_FIELDS consistency ---
-_has_gradient_fields = any(f in TRAIN_FIELDS for f in GRADIENT_FIELDS)
-if USE_GRADIENT and not all(f in TRAIN_FIELDS for f in GRADIENT_FIELDS):
-    raise ValueError(
-        f"USE_GRADIENT=True requires {GRADIENT_FIELDS} in TRAIN_FIELDS, "
-        f"but TRAIN_FIELDS={TRAIN_FIELDS}."
-    )
-if not USE_GRADIENT and _has_gradient_fields:
-    raise ValueError(
-        f"USE_GRADIENT=False but TRAIN_FIELDS={TRAIN_FIELDS} contains gradient "
-        f"fields {GRADIENT_FIELDS}. Remove them or set USE_GRADIENT=True."
-    )
 
 # --- Wall Distance ---
 # 0 = fluid (internal), 1 = wall, 2 = inlet, 3 = outlet
@@ -78,22 +57,13 @@ MESH_SCALE_FACTOR = 0.3
 BATCH_SIZE = 16
 NUM_POINTS = 16000
 EPOCH = 2000
-DL_SOLVER = "pointTransformer"  # "PointNetPP", "PointNetV2", "PointNetPP", "pointTransformer", "PointTransformerV3", "GNNFluid", or "MeshGraphNet" or "PointNet_Conv"
+DL_SOLVER = "PointNet"  # "PointNetPP", "PointNetV2", "PointNetPP", "pointTransformer", "PointTransformerV3", "GNNFluid", or "PointNet_Conv"
 HIDDEN_NEURO_SCALING = 1.0
 GNN_K = 3  # k-nearest neighbours for GNNFluid (EdgeConv) graph construction
 
 # --- Optimizer (Muon+AdamW) ---
 MUON_LR = 0.005    # learning rate for Muon-optimized parameters (conv/linear weights)
 ADAM_LR = 0.0005   # learning rate for AdamW-optimized parameters (biases, norms, embeddings)
-
-# --- MeshGraphNet (real mesh edge connectivity from .vtu files) ---
-# Requires OpenFOAM results with foamToVTK exported internal.vtu files.
-# batch_size is forced to 1 automatically (each mesh has a different edge count).
-MGN_NODE_DIM = 128   # hidden node feature width
-MGN_EDGE_DIM = 128   # hidden edge feature width
-MGN_LAYERS   = 6     # number of message-passing rounds
-# MGN_VTU_DIR: root directory containing <case>/VTK/<time>/internal.vtu files.
-# Defaults to RESULTS_DIR (set below) — override here if VTU files are elsewhere.
 
 # --- Multi-GPU ---
 # 0  → CPU only
@@ -160,8 +130,6 @@ OUTLET_PATCH_NAME = next((k for k, v in BOUNDARY_CONFIG.items() if v["flag"] == 
 # --- Directory Paths ---
 WORK_DIR       = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR    = os.path.join(WORK_DIR, "results")
-MGN_VTU_DIR     = os.path.join(WORK_DIR, "parametric_study")    # <case>/case/VTK/<time>/internal.vtu
-MGN_DATASET_DIR = os.path.join(WORK_DIR, "dataset_meshgraphnet") # pre-processed .npz files
 QUARANTINE_DIR = os.path.join(WORK_DIR, "quarantine")
 DATASET_DIR    = os.path.join(WORK_DIR, "dataset")
 INFERENCE_DIR  = os.path.join(WORK_DIR, "inference_output")

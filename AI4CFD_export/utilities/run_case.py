@@ -5,7 +5,6 @@ OpenFOAM solvers (e.g., simpleFoam) within a specified case directory.
 """
 
 import os
-import platform
 import subprocess
 import time
 
@@ -33,12 +32,8 @@ class SimulationRunner:
             subprocess.TimeoutExpired: If the command times out.
         """
         log_file = os.path.join(self.case_dir, "simulation.log")
-        if platform.system() == "Windows":
-            from utilities.openfoam_env import windows_openfoam_source_cmd
-            full_command = windows_openfoam_source_cmd(command, cwd=self.case_dir)
-        else:
-            full_command = f'bash -c "source /usr/lib/openfoam/openfoam2212/etc/bashrc && {command}"'
-
+        full_command = f'bash -c "source /usr/lib/openfoam/openfoam2212/etc/bashrc && {command}"'
+        
         with open(log_file, "a") as f:
             f.write(f"\n[{time.ctime()}] Running: {command}\n")
             f.flush()

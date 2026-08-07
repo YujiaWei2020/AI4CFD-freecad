@@ -1,0 +1,50 @@
+%{%(boundaries%)
+%{%(boundaries/%(0%)/BoundaryType%)
+%:empty
+    %(0%)
+    {
+        type        empty;
+    }
+%:wall
+    %(0%)
+    {
+        type        wall;
+    }
+%:constraint
+%{%(boundaries/%(0%)/BoundarySubType%)
+%:symmetry
+    %(0%)
+    {
+        type        symmetry;
+    }
+%:cyclic
+    %(0%)
+    {
+        type        cyclic;
+    }
+%:cyclicAMI
+    %(0%)_master
+    {
+        type        patch;
+    }
+
+    %(0%)_slave
+    {
+        type        patch;
+    }
+%:empty
+    %(0%)
+    {
+        type        empty;
+    }
+%}
+%:baffle
+    // Baffle "%(0%)" is created with createBaffles
+%:default
+    %(0%)
+    {
+        type        patch;
+    }
+%}
+
+%}

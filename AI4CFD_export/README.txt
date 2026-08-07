@@ -4,6 +4,10 @@ AI4CFD FreeCAD workbench -- export package
 What's in this zip
 -------------------
 freecad_addon/AI4CFD/   The FreeCAD workbench (commands, helpers, icons, InitGui.py).
+freecad_addon/AI4CFD/vendor/CfdOF/  A bundled copy of the CfdOF workbench. AI4CFD's
+                         InitGui.py registers it automatically on startup, so you do
+                         NOT need CfdOF separately installed or on the FreeCAD Addon
+                         Manager -- it just works out of the box.
 config.py               Shared pipeline configuration (paths, field/channel definitions).
 utilities/               Post-processing helpers the workbench calls into (wall distance,
                          VTK export, dataset prep, force/turbulence calculators, etc).
@@ -13,7 +17,11 @@ NOT included: dataset/, parametric_study/, cfd_models/ (project-specific CFD cas
 and results -- large, and not part of the workbench itself). Copy those separately if
 the new machine needs to open the same cases.
 
-Install on a Windows machine that already has FreeCAD + CfdOF + OpenFOAM set up
+Prerequisites: FreeCAD, and a working OpenFOAM install that CfdOF can find (see CfdOF's
+own docs for supported OpenFOAM versions/platforms). CfdOF itself is bundled -- you do
+not need to install it separately.
+
+Install on Windows
 ---------------------------------------------------------------------------------
 1. Extract this zip somewhere permanent (this folder becomes the "project root" --
    config.py and utilities/ must stay next to freecad_addon/, since the workbench's
@@ -21,7 +29,8 @@ Install on a Windows machine that already has FreeCAD + CfdOF + OpenFOAM set up
 
 2. Double-click install.bat.
    It will automatically:
-     - copy freecad_addon/AI4CFD into %APPDATA%\FreeCAD\Mod\AI4CFD
+     - copy freecad_addon/AI4CFD (including the bundled CfdOF) into
+       %APPDATA%\FreeCAD\Mod\AI4CFD
      - find a native Python (not FreeCAD's bundled one) and pip install
        cadquery, numpy, scipy into it
      - find FreeCAD and write the AI4CFD preferences (project root + python exe)
@@ -36,7 +45,8 @@ to fill in manually (it never guesses silently).
 Install on macOS/Linux, or if you'd rather do it by hand
 -----------------------------------------------------------
 1. Extract this zip to a permanent project folder.
-2. Copy freecad_addon/AI4CFD into FreeCAD's per-user Mod folder:
+2. Copy freecad_addon/AI4CFD (including its vendor/CfdOF subfolder) into FreeCAD's
+   per-user Mod folder:
      Linux:   ~/.local/share/FreeCAD/Mod/AI4CFD
      macOS:   ~/Library/Application Support/FreeCAD/Mod/AI4CFD
 3. Start FreeCAD, open Edit -> Preferences -> AI4CFD, and set:

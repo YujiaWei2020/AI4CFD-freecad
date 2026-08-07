@@ -1,0 +1,217 @@
+#!/bin/bash
+
+runCommand()
+{
+    sol=$(basename -- "$1")
+    sol="${sol%.*}"
+    if [ -f log."$sol" ]; then rm log."$sol"; fi
+    "$@" 1> >(tee -a log."$sol") 2> >(tee -a log."$sol" >&2)
+    err=$?
+    if [ ! $err -eq 0 ]; then exit $err; fi
+}
+
+runParallel()
+{
+    nproc="$1"
+    shift
+    exe="$(which $1)"
+    sol=$(basename -- "$1")
+    sol="${sol%.*}"
+    shift
+    if [ -f log."$sol" ]; then rm log."$sol"; fi
+    export OMPI_MCA_btl_vader_single_copy_mechanism=none  # Workaround for open-mpi/docker bug
+%{%(hostFileRequired%)
+%:False
+    mpiexec %(MPIOptionsOMPI%) -np $nproc "$exe" -parallel "$@" 1> >(tee -a log."$sol") 2> >(tee -a log."$sol" >&2)
+%:True
+    mpiexec %(MPIOptionsOMPI%) --hostfile %(hostFileName%) -np $nproc "$exe" -parallel "$@" 1> >(tee -a log."$sol") 2> >(tee -a log."$sol" >&2)
+%}
+    err=$?
+    if [ ! $err -eq 0 ]; then exit $err; fi
+}
+
+%{%(MeshUtility%)
+%:gmsh
+GMSH_EXE='%(GmshSettings/Executable%)'
+%{%(NumberOfThreads%)
+%:0
+if [[ $OSTYPE == 'darwin'* ]]
+then
+    NTHREADS=$(sysctl -n hw.logicalcpu)
+else
+    NTHREADS=$(nproc)
+fi
+%:default
+NTHREADS=%(NumberOfThreads%)
+%}
+runCommand "$GMSH_EXE" -nt $NTHREADS - "gmsh/%(Name%)_Geometry.geo"
+
+%}
+# Unset and source bashrc
+%{%(FoamRuntime%)
+%:Posix
+FOAMDIR="%(TranslatedFoamPath%)"
+%:BashWSL
+FOAMDIR="%(TranslatedFoamPath%)"
+%}
+if [ ! -z "$FOAMDIR" ]
+then
+    source "$FOAMDIR/etc/config.sh/unset" 2> /dev/null
+    source "$FOAMDIR/etc/bashrc"
+fi
+
+%{%(ParallelMesh%)
+%:True
+# Pick up number of parallel processes
+NPROC=$(foamDictionary -entry "numberOfSubdomains" -value system/decomposeParDict)
+
+%}
+%{%(MeshUtility%)
+%:cfMesh
+# Extract feature edges
+runCommand surfaceFeatureEdges -angle 60 "constant/triSurface/%(Name%)_Geometry.stl" "%(Name%)_Geometry.fms"
+
+%{%(ParallelMesh%)
+%:True
+%{%(NumberOfThreads%)
+%:0
+export OMP_NUM_THREADS=1
+%:default
+export OMP_NUM_THREADS=%(NumberOfThreads%)
+%}
+runCommand preparePar
+export MPI_BUFFER_SIZE=200000000
+runParallel $NPROC cartesianMesh
+if [ ! -z $FOAM_API ] || [ $WM_PROJECT_VERSION -lt 11 ] 2>/dev/null
+then
+    runCommand reconstructParMesh -constant -fullMatch
+else
+    runCommand reconstructPar -constant
+fi
+%:False
+%{%(NumberOfThreads%)
+%:0
+%:default
+export OMP_NUM_THREADS=%(NumberOfThreads%)
+%}
+runCommand cartesianMesh
+%}
+%:snappyHexMesh
+runCommand blockMesh
+
+# Extract feature edges
+which surfaceFeatures > /dev/null 2>&1
+if [ $? == 0 ]
+then
+    runCommand surfaceFeatures
+else
+    runCommand surfaceFeatureExtract
+fi
+
+%{%(SnappySettings/MovingMeshRegionsPresent%)
+%:True
+which createNonConformalCouples > /dev/null 2>&1
+if [ $? == 0 ]
+then
+    echo "mode inside;" > system/MMR_Properties
+else
+    echo "faceType boundary;" > system/MMR_Properties
+    echo "cellZoneInside inside;" >> system/MMR_Properties
+fi
+
+%}
+%{%(ParallelMesh%)
+%:True
+runCommand decomposePar -force
+runParallel $NPROC snappyHexMesh -overwrite
+%{%(SnappySettings/MovingMeshRegionsPresent%)
+%:True
+which createNonConformalCouples > /dev/null 2>&1
+if [ $? == 0 ]
+then
+	runParallel createBaffles -overwrite
+	runParallel splitBaffles -overwrite
+%{%(SnappySettings/MovingMeshRegions%)
+	runParallel createNonConformalCouples -overwrite %(0%)_M %(0%)_S
+	mv log.createNonConformalCouples log.createNonConformalCouples%(0%)
+%}
+else
+	runParallel createPatch -overwrite || return 1
+fi
+%}
+if [ ! -z $FOAM_API ] || [ $WM_PROJECT_VERSION -lt 11 ] 2>/dev/null
+then    
+    runCommand reconstructParMesh -constant
+else
+    runCommand reconstructPar -constant
+fi
+%:False
+runCommand snappyHexMesh -overwrite
+%{%(SnappySettings/MovingMeshRegionsPresent%)
+%:True
+which createNonConformalCouples > /dev/null 2>&1
+if [ $? == 0 ]
+then
+	runCommand createBaffles -overwrite
+	runCommand splitBaffles -overwrite
+%{%(SnappySettings/MovingMeshRegions%)
+	runCommand createNonConformalCouples -overwrite %(0%)_M %(0%)_S
+	mv log.createNonConformalCouples log.createNonConformalCouples%(0%)
+%}
+else
+	runCommand createPatch -overwrite || return 1
+fi
+%}
+%}
+%:gmsh
+runCommand gmshToFoam "gmsh/%(Name%)_Geometry.msh"
+
+%{%(ConvertToDualMesh%)
+%:True
+# polyDualMesh doesn't seem to convert cell zones or sets
+rm -f constant/polyMesh/cellZones
+rm -rf constant/polyMesh/sets
+# Convert to polyhedra
+runCommand polyDualMesh 10 -concaveMultiCells -overwrite
+
+%}
+if [ ! -z $FOAM_API ] || [ $WM_PROJECT_VERSION -lt 9 ] 2>/dev/null
+then
+    runCommand transformPoints -scale "(0.001 0.001 0.001)"
+else
+    runCommand transformPoints "scale=(0.001 0.001 0.001)"
+fi
+%}
+
+%{%(ExtrusionSettings/ExtrusionsPresent%)
+%:True
+%{%(ExtrusionSettings/Extrude2DPlanar%)
+%:True
+# Slight abuse of flattenMesh to make patch flat before extrusion
+# Change patch type to empty first
+%{%(ExtrusionSettings/Extrusions%)
+%{%(ExtrusionSettings/Extrusions/%(0%)/ExtrusionType%)
+%:2DPlanar
+cp system/changeDictionaryDict.%(0%) system/changeDictionaryDict
+runCommand changeDictionary
+rm system/changeDictionaryDict
+%}
+%}
+runCommand flattenMesh
+%}
+%{%(ExtrusionSettings/Extrusions%)
+cp system/extrudeMeshDict.%(0%) system/extrudeMeshDict
+%{%(ExtrusionSettings/Extrusions/%(0%)/KeepExistingMesh%)
+%:False
+# Refinement data is not processed by extrudeMesh so should be removed
+rm -f constant/polyMesh/{cellLevel,pointLevel,level0Edge,refinementHistory,sets/meshProtectedCells}
+%}
+runCommand extrudeMesh
+mv log.extrudeMesh log.extrudeMesh.%(0%)
+rm system/extrudeMeshDict
+%}
+
+%}
+
+# Extract surface mesh and convert to mm for visualisation in FreeCAD
+runCommand foamToSurface -scale 1000 -tri surfaceMesh.vtk

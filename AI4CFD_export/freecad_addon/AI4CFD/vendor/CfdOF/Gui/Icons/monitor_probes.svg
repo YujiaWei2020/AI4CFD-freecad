@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="64"
+   height="64"
+   id="svg2869"
+   version="1.1"
+   viewBox="0 0 64 64"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <defs
+     id="defs2871">
+    <linearGradient
+       id="linearGradient5">
+      <stop
+         style="stop-color:#ef2929;stop-opacity:1;"
+         offset="0"
+         id="stop19" />
+      <stop
+         style="stop-color:#ef2929;stop-opacity:0;"
+         offset="1"
+         id="stop20" />
+    </linearGradient>
+    <linearGradient
+       id="swatch18">
+      <stop
+         style="stop-color:#ef2929;stop-opacity:1;"
+         offset="0"
+         id="stop18" />
+    </linearGradient>
+    <linearGradient
+       id="swatch15">
+      <stop
+         style="stop-color:#3d0000;stop-opacity:1;"
+         offset="0"
+         id="stop15" />
+    </linearGradient>
+    <linearGradient
+       id="linearGradient5-1">
+      <stop
+         style="stop-color:#ef2929;stop-opacity:1;"
+         offset="0"
+         id="stop5" />
+      <stop
+         style="stop-color:#ef2929;stop-opacity:0;"
+         offset="1"
+         id="stop6" />
+    </linearGradient>
+    <linearGradient
+       id="linearGradient3836-9">
+      <stop
+         style="stop-color:#a40000;stop-opacity:1"
+         offset="0"
+         id="stop3838-8" />
+      <stop
+         style="stop-color:#ef2929;stop-opacity:1"
+         offset="1"
+         id="stop3840-1" />
+    </linearGradient>
+  </defs>
+  <metadata
+     id="metadata2874">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:creator>
+          <cc:Agent>
+            <dc:title>[maxwxyz]</dc:title>
+          </cc:Agent>
+        </dc:creator>
+        <dc:relation>https://www.freecad.org/wiki/index.php?title=Artwork</dc:relation>
+        <dc:publisher>
+          <cc:Agent>
+            <dc:title>FreeCAD</dc:title>
+          </cc:Agent>
+        </dc:publisher>
+        <dc:identifier>FreeCAD/src/</dc:identifier>
+        <dc:rights>
+          <cc:Agent>
+            <dc:title>FreeCAD LGPL2+</dc:title>
+          </cc:Agent>
+        </dc:rights>
+        <dc:date>2024</dc:date>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     id="layer3"
+     style="display:inline">
+    <path
+       style="fill:none;stroke:#eeeeec;stroke-width:6;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       d="m 10.361152,12.038297 0.0035,42.817016 19.64403,-0.164097 20.840573,-0.312568"
+       id="path4589-7" />
+    <ellipse
+       style="fill:none;fill-opacity:1;stroke:#eeeeec;stroke-width:6;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       id="path4629-5"
+       cx="53.393063"
+       cy="53.99556"
+       rx="4.2294612"
+       ry="4.0227451" />
+    <ellipse
+       style="fill:none;fill-opacity:1;stroke:#eeeeec;stroke-width:6;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       id="path4629-3"
+       cx="10.606938"
+       cy="10.00444"
+       rx="4.2294612"
+       ry="4.0227451" />
+    <path
+       d="m 24.090838,38.904305 6.15396,-29.0988561 h 8.110185 q 3.545659,0 5.664903,1.0596221 2.159999,1.059622 3.097357,2.975093 0.978113,1.915471 0.978113,4.442262 0,3.46415 -1.670943,5.746413 -1.670942,2.282263 -4.564526,3.423395 -2.852829,1.100377 -6.439243,1.100377 h -3.097357 l -2.159999,10.351694 z m 9.332826,-15.405277 h 2.486037 q 2.730565,0 4.401507,-1.344905 1.670943,-1.344905 1.670943,-3.708678 0,-3.586413 -3.871696,-3.586413 h -2.852829 z"
+       id="text8199"
+       style="font-style:italic;font-weight:bold;font-size:40.7547px;line-height:1.25;-inkscape-font-specification:'sans-serif, Bold Italic';stroke-width:4;fill:#eeeeec;stroke:#eeeeec;stroke-dasharray:none"
+       transform="scale(1.0017681,0.99823502)"
+       aria-label="P" />
+    <path
+       d="m 24.090838,38.904305 6.15396,-29.0988561 h 8.110185 q 3.545659,0 5.664903,1.0596221 2.159999,1.059622 3.097357,2.975093 0.978113,1.915471 0.978113,4.442262 0,3.46415 -1.670943,5.746413 -1.670942,2.282263 -4.564526,3.423395 -2.852829,1.100377 -6.439243,1.100377 h -3.097357 l -2.159999,10.351694 z m 9.332826,-15.405277 h 2.486037 q 2.730565,0 4.401507,-1.344905 1.670943,-1.344905 1.670943,-3.708678 0,-3.586413 -3.871696,-3.586413 h -2.852829 z"
+       id="path104"
+       style="font-style:italic;font-weight:bold;font-size:40.7547px;line-height:1.25;-inkscape-font-specification:'sans-serif, Bold Italic';stroke-width:2"
+       transform="scale(1.0017681,0.99823502)"
+       aria-label="P" />
+    <path
+       style="fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       d="m 10.361152,12.038297 0.0035,42.817016 19.64403,-0.164097 20.840573,-0.312568"
+       id="path105" />
+    <ellipse
+       style="fill:#c40000;fill-opacity:1;stroke:#c40000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       id="ellipse105"
+       cx="53.393063"
+       cy="53.99556"
+       rx="4.2294612"
+       ry="4.0227451" />
+    <ellipse
+       style="fill:#c40000;fill-opacity:1;stroke:#c40000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"
+       id="ellipse106"
+       cx="10.606938"
+       cy="10.00444"
+       rx="4.2294612"
+       ry="4.0227451" />
+  </g>
+</svg>

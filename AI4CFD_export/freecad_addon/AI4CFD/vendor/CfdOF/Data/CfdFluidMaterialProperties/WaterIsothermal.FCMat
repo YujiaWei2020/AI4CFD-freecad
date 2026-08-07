@@ -1,0 +1,12 @@
+; SPDX-FileCopyrightText: 2016 CSIR, South Africa
+; SPDX-FileCopyrightText: 2021 Oliver Oxtoby
+; WaterIsothermal
+;
+; FreeCAD Material card: see https://www.freecad.org/wiki/Material
+
+[FCMat]
+Name = Water
+Type = Isothermal
+Description = Standard distilled water properties at 20 Degrees Celsius and 1 atm
+Density = 998 kg/m^3
+DynamicViscosity = 1.003e-3 kg/m/s 

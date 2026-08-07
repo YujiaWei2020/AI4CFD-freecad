@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+*.pyo
+AI4CFD_export.zip
