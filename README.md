@@ -37,24 +37,20 @@ https://github.com/user-attachments/assets/64764b34-4392-4d9d-af45-4846d47e28a8
 
 ## Requirements
 
-- [FreeCAD](https://www.freecad.org/) 0.21+
-- Python 3.8+
-
-Install Python dependencies:
-
-```bash
-pip install -r requirement.txt
-```
-
+- [FreeCAD](https://www.freecad.org/) 1.00+
+- Python 3.12+
 ---
 
 ## Installation
 
 ```bash
 git clone https://github.com/YujiaWei2020/AI4CFD-freecad.git
-cd AI4CFD-freecad
-pip install -r requirement.txt
 ```
+under windows
+go to freecad_addon folder
+double click install.bat
+system will automatically search your python environment, if not working, you will need to install python manually, i.e., 3.12.X
+All requirements will now be installed automatically.
 
 ---
 
