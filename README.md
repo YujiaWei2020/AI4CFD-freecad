@@ -47,19 +47,19 @@ https://github.com/user-attachments/assets/64764b34-4392-4d9d-af45-4846d47e28a8
 git clone https://github.com/YujiaWei2020/AI4CFD-freecad.git
 ```
 under windows
-go to freecad_addon folder
-double click install.bat
-system will automatically search your python environment, if not working, you will need to install python manually, i.e., 3.12.X
-All requirements will now be installed automatically.
+1. go to freecad_addon folder
+2. double click install.bat
+3. system will automatically search your python environment, if not working, you will need to install python manually, i.e., 3.12.X
+4. All requirements will now be installed automatically.
 
 ---
 
 ## Usage
 
 1. Open **FreeCAD**
-2. Load the macro/script from this repository
-3. Configure your design parameters
-4. Run the design space search — results will be visualized inside FreeCAD
+2. You will find AI4CFD module under your addon managers
+3. Set your working directory
+4. Add design parameters, run CFD batches
 
 ### Tutorial
 
