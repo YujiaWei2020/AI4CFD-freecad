@@ -1705,6 +1705,105 @@ def _is_cfdof_case_complete(case_dir: str) -> bool:
     )
 
 
+def _write_turbulence_lib(d: str) -> None:
+    """Write system/turbulenceLib, matching CfdOF's own Allrun detection.
+
+    CfdOF's template controlDict does '#include "turbulenceLib"' (see
+    vendor/CfdOF/Data/Templates/case/system/controlDict) — but that file is
+    never a static template; CfdOF's own Allrun script writes it at run
+    time by checking which turbulence library is actually installed
+    (OpenFOAM renamed 'turbulenceModels' to 'momentumTransportModels' in
+    some branches; older/ESI Windows builds still ship 'turbulenceModels').
+    Any pipeline that invokes OpenFOAM utilities directly instead of
+    running Allrun (as this one does) must replicate that one-line
+    detection itself, or the very first utility that reads controlDict —
+    even something as unrelated as createPatch — fails immediately with a
+    missing-include FOAM FATAL IO ERROR, before the solver ever runs.
+    """
+    ctrl = os.path.join(d, "system", "controlDict")
+    if not os.path.isfile(ctrl):
+        return
+    text = open(ctrl, encoding="utf-8", errors="replace").read()
+    if "turbulenceLib" not in text:
+        return
+    if os.path.isfile(os.path.join(d, "system", "turbulenceLib")):
+        return  # already written (e.g. meshCase and case share nothing, but idempotent either way)
+
+    # Ask the sourced OpenFOAM environment for FOAM_LIBBIN rather than
+    # guessing a version/platform-specific install path ourselves.
+    if sys.platform == "win32":
+        from utilities.openfoam_env import windows_openfoam_source_cmd
+        probe_cmd = windows_openfoam_source_cmd("echo %FOAM_LIBBIN%", cwd=d)
+    else:
+        probe_cmd = f'bash -c "source {_OF_SOURCE} 2>/dev/null && echo $FOAM_LIBBIN"'
+    lib_bin = ""
+    try:
+        out = subprocess.run(probe_cmd, shell=True, cwd=d, capture_output=True,
+                              text=True, timeout=60).stdout
+        lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        if lines:
+            lib_bin = lines[-1]
+    except Exception as exc:
+        print(f"[AI4CFD] WARNING: could not probe FOAM_LIBBIN ({exc})", flush=True)
+
+    momentum = os.path.isdir(lib_bin) and any(
+        os.path.isfile(os.path.join(lib_bin, f"libmomentumTransportModels{ext}"))
+        for ext in (".so", ".dll"))
+    lib_name = "libmomentumTransportModels.so" if momentum else "libturbulenceModels.so"
+
+    with open(os.path.join(d, "system", "turbulenceLib"), "w") as fh:
+        fh.write(lib_name + "\n")
+    note = "" if lib_bin else " (FOAM_LIBBIN not resolved — defaulted)"
+    print(f"[AI4CFD] system/turbulenceLib -> {lib_name}{note}", flush=True)
+
+
+def _run_cfmesh(mesh_dir: str) -> None:
+    """Run cfMesh's cartesianMesh, converting the surface to .fms first.
+
+    Mirrors CfdOF's own Allmesh template for MeshUtility=cfMesh (see
+    vendor/CfdOF/Data/Templates/mesh/Allmesh): meshDict's surfaceFile
+    references a '<Name>_Geometry.fms' file that CfdOF's own mesh writer
+    never actually produces as a static output — its Allmesh script runs
+    surfaceFeatureEdges to generate it from the STL immediately before
+    invoking cartesianMesh. Any pipeline invoking these utilities directly
+    (as this one does) must do the same conversion itself, or cartesianMesh
+    fails outright with a missing-surface error.
+    """
+    import re as _re
+
+    mdict_path = os.path.join(mesh_dir, "system", "meshDict")
+    if not os.path.isfile(mdict_path):
+        _require("cartesianMesh", mesh_dir)
+        return
+
+    text = open(mdict_path, encoding="utf-8", errors="replace").read()
+    m = _re.search(r'surfaceFile\s+"([^"]+)"', text)
+    if m:
+        surface_ref = m.group(1)          # e.g. 'Fusion005_Geometry.fms'
+        trisurf  = os.path.join(mesh_dir, "constant", "triSurface")
+        fms_path = os.path.join(trisurf, surface_ref)
+        if surface_ref.lower().endswith(".fms") and not os.path.isfile(fms_path):
+            stl_ref  = surface_ref[:-4] + ".stl"
+            stl_path = os.path.join(trisurf, stl_ref)
+            if os.path.isfile(stl_path):
+                _require(
+                    f'surfaceFeatureEdges -angle 60 '
+                    f'"constant/triSurface/{stl_ref}" "{surface_ref}"',
+                    mesh_dir)
+            else:
+                print(f"[AI4CFD] WARNING: meshDict expects "
+                      f"constant/triSurface/{surface_ref}, and no matching "
+                      f"{stl_ref} was found to convert — cartesianMesh will "
+                      f"likely fail", flush=True)
+    else:
+        print("[AI4CFD] meshDict has no surfaceFile entry — running "
+              "cartesianMesh as-is", flush=True)
+
+    if _run("cartesianMesh", mesh_dir) != 0:
+        print("[AI4CFD] cartesianMesh failed — trying tetMesh", flush=True)
+        _require("tetMesh", mesh_dir)
+
+
 def _run_pipeline_only_split(case_dir: str, num_cores: int,
                              mesh_only: bool = False) -> None:
     """Run meshing + solver for a case CfdOF already wrote — no template copy."""
@@ -1728,22 +1827,35 @@ def _run_pipeline_only_split(case_dir: str, num_cores: int,
         print(f"[AI4CFD] meshCase/constant/triSurface/ contains: "
               f"{sorted(os.listdir(mesh_trisurf))}", flush=True)
 
-    _update_blockmesh_bbox(mesh_dir)   # expand background mesh if geometry grew
-    if _has(mesh_dir, "system", "blockMeshDict"):
-        _require("blockMesh", mesh_dir)
-    else:
-        print("[AI4CFD] No blockMeshDict — skipping blockMesh", flush=True)
+    # CfdOF's template controlDict always '#include's turbulenceLib, which
+    # is normally written at run time by Allrun, not by the case writer —
+    # write it now so even the FIRST utility below (meshing, createPatch)
+    # doesn't fail on a missing include. meshCase and case each carry their
+    # own controlDict/system dir, so both need it.
+    _write_turbulence_lib(mesh_dir)
+    _write_turbulence_lib(solv_dir)
 
-    if _has(mesh_dir, "system", "surfaceFeatureExtractDict") or \
-       _has(mesh_dir, "system", "surfaceFeaturesDict"):
-        _require("surfaceFeatureExtract", mesh_dir)
+    if _has(mesh_dir, "system", "meshDict"):
+        # ── cfMesh path ────────────────────────────────────────────────────
+        _run_cfmesh(mesh_dir)
     else:
-        print("[AI4CFD] No surfaceFeatureExtractDict — skipping", flush=True)
+        # ── snappyHexMesh path ───────────────────────────────────────────────
+        _update_blockmesh_bbox(mesh_dir)   # expand background mesh if geometry grew
+        if _has(mesh_dir, "system", "blockMeshDict"):
+            _require("blockMesh", mesh_dir)
+        else:
+            print("[AI4CFD] No blockMeshDict — skipping blockMesh", flush=True)
 
-    if _has(mesh_dir, "system", "snappyHexMeshDict"):
-        _require("snappyHexMesh -overwrite", mesh_dir)
-    else:
-        print("[AI4CFD] No snappyHexMeshDict — skipping", flush=True)
+        if _has(mesh_dir, "system", "surfaceFeatureExtractDict") or \
+           _has(mesh_dir, "system", "surfaceFeaturesDict"):
+            _require("surfaceFeatureExtract", mesh_dir)
+        else:
+            print("[AI4CFD] No surfaceFeatureExtractDict — skipping", flush=True)
+
+        if _has(mesh_dir, "system", "snappyHexMeshDict"):
+            _require("snappyHexMesh -overwrite", mesh_dir)
+        else:
+            print("[AI4CFD] No snappyHexMeshDict — skipping", flush=True)
 
     src_poly = os.path.join(mesh_dir, "constant", "polyMesh")
     dst_poly = os.path.join(solv_dir, "constant", "polyMesh")

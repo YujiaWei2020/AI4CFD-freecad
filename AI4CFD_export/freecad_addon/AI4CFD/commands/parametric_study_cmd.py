@@ -295,7 +295,16 @@ def _read_all_expression_linked_properties(doc) -> dict:
     synthetic 'defaultFaces' patch that CfdOF's mesher assigns any
     unclaimed face to (the fallback template ships an identical
     'defaultFaces' block for the same boundary for exactly this reason).
+
+    Values are converted via CfdOF's own CfdTools.propsToDict(), NOT a
+    bare float(quantity) — FreeCAD's internal unit system is mm/kg/s/deg
+    based, not fully SI, so e.g. a Speed property's raw .Value is in mm/s.
+    propsToDict() applies the exact SI conversion CfdOF's own native case
+    writer relies on, so results here match what that writer would embed
+    directly rather than re-deriving (and risking getting wrong) our own
+    per-property unit handling.
     """
+    CfdTools = _import_cfdof_module("CfdTools")
     out = {}
     default_label = None
     for obj in doc.Objects:
@@ -304,21 +313,39 @@ def _read_all_expression_linked_properties(doc) -> dict:
         engine = getattr(obj, "ExpressionEngine", None)
         if not engine:
             continue
-        props = {}
+        linked_names = set()
         for entry in engine:
             try:
                 path = entry[0]
             except (TypeError, IndexError):
                 continue
             prop_name = str(path).strip("<>")
-            if "." in prop_name:
+            if "." not in prop_name:
                 # Nested paths (e.g. 'Placement.Base.x') aren't boundary-
                 # condition scalars/quantities _PROPERTY_OF_MAP knows about.
-                continue
-            val = _quantity_to_float(getattr(obj, prop_name, None))
-            if val is None:
-                continue
-            props[prop_name] = val
+                linked_names.add(prop_name)
+        if not linked_names:
+            continue
+
+        if CfdTools is not None:
+            si_vals = CfdTools.propsToDict(obj)
+            props = {k: v for k, v in si_vals.items()
+                     if k in linked_names and isinstance(v, (int, float))}
+        else:
+            # CfdTools unimportable — shouldn't normally happen, but fall
+            # back to a bare float rather than crash. WRONG for any
+            # length-dimensioned quantity (e.g. Speed), so this case is
+            # logged loudly rather than silently trusted.
+            FreeCAD.Console.PrintWarning(
+                "AI4CFD: CfdTools unimportable — boundary property units "
+                "NOT verified against SI; values may be off by a unit "
+                "factor (e.g. mm/s vs m/s)\n")
+            props = {}
+            for name in linked_names:
+                val = _quantity_to_float(getattr(obj, name, None))
+                if val is not None:
+                    props[name] = val
+
         if props:
             out[obj.Label] = props
             if getattr(obj, "DefaultBoundary", False):
