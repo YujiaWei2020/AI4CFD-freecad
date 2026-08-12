@@ -336,8 +336,20 @@ def _read_all_cfdof_wall_roughness(doc) -> dict:
 
 
 def _import_cfdof(name: str):
-    """Import a CfdOF module by trying 'CfdOF.<name>' then '<name>' directly."""
-    for full in (f"CfdOF.{name}", name):
+    """Import a CfdOF class by trying it under each of CfdOF's subpackages.
+
+    CfdMeshTools lives at CfdOF.Mesh.CfdMeshTools and CfdCaseWriterFoam at
+    CfdOF.Solve.CfdCaseWriterFoam — neither is directly under the CfdOF
+    package root. Trying only 'CfdOF.<name>' (as before) never matched
+    either, so this always silently returned None and _write_case_via_cfdof
+    always fell back to the STL-only export, even after the mesh/analysis
+    object detection was fixed to actually find both objects.
+    """
+    for full in (f"CfdOF.{name}",
+                 f"CfdOF.Mesh.{name}",
+                 f"CfdOF.Solve.{name}",
+                 f"CfdOF.PostProcess.{name}",
+                 name):
         try:
             mod = __import__(full, fromlist=[name])
             return getattr(mod, name)   # return the class, not the module
