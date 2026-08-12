@@ -1040,6 +1040,80 @@ def _patch_inlet_velocity(solv_dir: str, params: dict) -> None:
           f"({nx:.6g} {ny:.6g} {nz:.6g}) m/s", flush=True)
 
 
+def _patch_named_wall_roughness(solv_dir: str, params: dict) -> bool:
+    """Rewrite each wall patch's Ks/Cs in 0/nut for nutkRoughWallFunction BCs.
+
+    Mirrors _patch_named_boundary_velocities() but for wall roughness: the
+    STL-only fallback export copies 0/nut from the template verbatim, and
+    (until now) nothing ever read RoughnessHeight/RoughnessConstant off the
+    CfdOF boundary objects at all — so a spreadsheet alias expression-linked
+    to roughness had zero effect on any exported case, regardless of value.
+
+    params['_wall_roughness'] is {patch_name: {'Ks': height_m, 'Cs': const}},
+    written by parametric_study_cmd.py's _read_all_cfdof_wall_roughness()
+    from each wall-type CfdOF boundary object's Label (== OpenFOAM patch
+    name) and its expression-linked RoughnessHeight/RoughnessConstant.
+    """
+    import re as _re
+
+    rough = params.get("_wall_roughness")
+    if not rough:
+        return False
+
+    nut_path = os.path.join(solv_dir, "0", "nut")
+    if not os.path.isfile(nut_path):
+        print("[AI4CFD] 0/nut not found — wall roughness patch skipped",
+              flush=True)
+        return False
+
+    with open(nut_path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+
+    patched = 0
+    for patch_name, vals in rough.items():
+        m = _re.search(rf'\b{_re.escape(patch_name)}\b\s*\n?\s*\{{', text)
+        if not m:
+            continue
+        start, depth, i = m.end(), 1, m.end()
+        while i < len(text) and depth > 0:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        block = text[start: i - 1]
+
+        block_count = 0
+        for key in ("Ks", "Cs"):
+            if key not in vals:
+                continue
+            val = vals[key]
+            new_block, n = _re.subn(
+                rf'(\b{key}\s+uniform\s+)(-?[\d.eE+\-]+)',
+                lambda mo, val=val: f"{mo.group(1)}{val:.6g}",
+                block)
+            if n:
+                block = new_block
+                block_count += n
+
+        if block_count == 0:
+            continue
+        text = text[:start] + block + text[i - 1:]
+        patched += block_count
+        print(f"[AI4CFD] 0/nut: patch '{patch_name}' -> "
+              f"Ks={vals.get('Ks')}, Cs={vals.get('Cs')} "
+              f"({block_count} value(s))", flush=True)
+
+    if patched == 0:
+        print("[AI4CFD] 0/nut: no named boundaryField blocks matched "
+              "_wall_roughness", flush=True)
+        return False
+
+    with open(nut_path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return True
+
+
 def _patch_inlet_flow_rate(solv_dir: str, params: dict) -> None:
     """Rewrite the inlet's volumetricFlowRate in 0/U for flowRateInletVelocity BCs.
 
@@ -1428,6 +1502,7 @@ def _run_split(case_dir: str, template_dir: str, num_cores: int,
     if not _patch_named_boundary_velocities(solv_dir, params or {}):
         _patch_inlet_velocity(solv_dir, params or {})
     _patch_inlet_flow_rate(solv_dir, params or {})
+    _patch_named_wall_roughness(solv_dir, params or {})
 
     # ── 11. renumberMesh — improve solver convergence ─────────────────────────
     if _has(solv_dir, "system", "decomposeParDict") or True:
@@ -1628,6 +1703,7 @@ def _run_single(case_dir: str, template_dir: str, num_cores: int,
     if not _patch_named_boundary_velocities(case_dir, params or {}):
         _patch_inlet_velocity(case_dir, params or {})
     _patch_inlet_flow_rate(case_dir, params or {})
+    _patch_named_wall_roughness(case_dir, params or {})
 
     _run("renumberMesh -overwrite", case_dir)
 

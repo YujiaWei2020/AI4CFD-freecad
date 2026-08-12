@@ -238,6 +238,54 @@ def _read_all_cfdof_boundary_velocities(doc) -> dict:
     return out
 
 
+def _quantity_to_float(q, unit: str = None):
+    """Convert a FreeCAD Quantity-like property value to float, or None."""
+    if q is None:
+        return None
+    if unit is not None:
+        try:
+            return float(q.getValueAs(unit))
+        except AttributeError:
+            pass
+    try:
+        return float(q)
+    except Exception:
+        return None
+
+
+def _read_all_cfdof_wall_roughness(doc) -> dict:
+    """Return {patch_name: {'Ks': height_m, 'Cs': roughness_const}} per wall BC.
+
+    Mirrors _read_all_cfdof_boundary_velocities() but for OpenFOAM's
+    nutkRoughWallFunction (written to 0/nut). Nothing previously read
+    RoughnessHeight/RoughnessConstant at all, so the STL-only fallback
+    export copied 0/nut from the template unchanged for every case — a
+    spreadsheet alias expression-linked to e.g. RoughnessConstant (Cs) had
+    no effect whatsoever on the exported case, the same class of bug as the
+    velocity one above but for a field this addon never patched at all.
+
+    A boundary marked DefaultBoundary=True also gets mirrored onto the
+    synthetic 'defaultFaces' patch that CfdOF's mesher assigns any
+    unclaimed face to — the fallback template ships an identical
+    'defaultFaces' nutkRoughWallFunction block for the same reason.
+    """
+    out = {}
+    default_label = None
+    for obj in doc.Objects:
+        if getattr(obj, "BoundaryType", "") != "wall":
+            continue
+        ks = _quantity_to_float(getattr(obj, "RoughnessHeight", None), "m")
+        cs = _quantity_to_float(getattr(obj, "RoughnessConstant", None))
+        if ks is None or cs is None:
+            continue
+        out[obj.Label] = {"Ks": ks, "Cs": cs}
+        if getattr(obj, "DefaultBoundary", False):
+            default_label = obj.Label
+    if default_label is not None:
+        out["defaultFaces"] = out[default_label]
+    return out
+
+
 def _import_cfdof(name: str):
     """Import a CfdOF module by trying 'CfdOF.<name>' then '<name>' directly."""
     for full in (f"CfdOF.{name}", name):
@@ -1729,6 +1777,15 @@ class CFDParametricPanel:
                     params["_boundary_velocities_ms"] = all_vels
                     FreeCAD.Console.PrintMessage(
                         f"AI4CFD: CfdOF boundary velocities = {all_vels} "
+                        f"(case {i+1})\n")
+
+                # Per-patch wall roughness (Ks/Cs for nutkRoughWallFunction in
+                # 0/nut) — same rationale as the velocities above.
+                all_rough = _read_all_cfdof_wall_roughness(doc)
+                if all_rough:
+                    params["_wall_roughness"] = all_rough
+                    FreeCAD.Console.PrintMessage(
+                        f"AI4CFD: CfdOF wall roughness = {all_rough} "
                         f"(case {i+1})\n")
 
                 # VolFlowRate exists (defaulted to 0) on every inlet BC object
