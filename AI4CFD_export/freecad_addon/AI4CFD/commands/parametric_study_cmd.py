@@ -229,8 +229,16 @@ def _write_case_via_cfdof(doc, case_dir: str) -> bool:
     Returns True on success.
     """
     try:
+        # Modern CfdOF's analysis container is an App::DocumentObjectGroupPython
+        # whose Proxy class is CfdAnalysis.CfdAnalysis — it is NOT a
+        # Fem::FemAnalysis object (that TypeId belongs to the FEM workbench).
+        # CfdOF itself identifies it via isinstance(obj.Proxy, CfdAnalysis)
+        # (see CfdTools.getActiveAnalysis); mirror that here by proxy class
+        # name so this keeps working across CfdOF versions/object types.
         analysis = next(
-            (o for o in doc.Objects if o.TypeId == "Fem::FemAnalysis"), None)
+            (o for o in doc.Objects
+             if type(getattr(o, "Proxy", None)).__name__ == "CfdAnalysis"),
+            None)
         mesh_obj = _find_cfdof_mesh_obj(doc)
 
         if analysis is None or mesh_obj is None:
@@ -284,8 +292,25 @@ def _write_case_via_cfdof(doc, case_dir: str) -> bool:
 
 # ── CfdOF patch export ────────────────────────────────────────────────────────
 
+def _refs_prop_name(obj) -> str | None:
+    """Return the name of obj's CfdOF face-reference property, or None.
+
+    Modern CfdOF (see CfdFluidBoundary.py) renamed the boundary object's
+    face-reference property from 'References' to 'ShapeRefs' — old code
+    (and old documents) still migrate 'References' into 'ShapeRefs' on load,
+    but never leave the legacy name behind. Check the current name first so
+    parametric export actually finds each boundary's referenced faces
+    instead of silently falling back to a much weaker per-face guess.
+    """
+    if hasattr(obj, "ShapeRefs"):
+        return "ShapeRefs"
+    if hasattr(obj, "References"):
+        return "References"
+    return None
+
+
 def _get_faces_from_refs(references, doc) -> list:
-    """Extract Part.Face elements from CfdOF-style References."""
+    """Extract Part.Face elements from CfdOF-style References/ShapeRefs."""
     faces = []
     for ref in references:
         try:
@@ -653,18 +678,21 @@ def _export_stls_for_case(doc, body, stl_dir: str,
     # ── Method 1: CfdOF boundary objects ─────────────────────────────────────
     boundaries = []
     for obj in doc.Objects:
-        has_bt = hasattr(obj, "BoundaryType") and hasattr(obj, "References")
+        refs_prop = _refs_prop_name(obj)
+        if refs_prop is None:
+            continue
+        has_bt = hasattr(obj, "BoundaryType")
         proxy = getattr(obj, "Proxy", None)
         ptype = (getattr(proxy, "Type", "") or type(proxy).__name__) if proxy else ""
-        has_proxy = "Boundary" in ptype and hasattr(obj, "References")
-        if (has_bt or has_proxy) and getattr(obj, "References", []):
-            boundaries.append(obj)
+        has_proxy = "Boundary" in ptype
+        if (has_bt or has_proxy) and getattr(obj, refs_prop, []):
+            boundaries.append((obj, refs_prop))
 
     if boundaries:
         body_sections = []
-        for i, bc in enumerate(boundaries, 1):
+        for i, (bc, refs_prop) in enumerate(boundaries, 1):
             pname = f"patch_{i}_0"
-            faces = _get_faces_from_refs(bc.References, doc)
+            faces = _get_faces_from_refs(getattr(bc, refs_prop), doc)
             if not faces:
                 FreeCAD.Console.PrintWarning(
                     f"AI4CFD: no faces resolved for {pname} ({bc.Label})\n")
@@ -870,8 +898,9 @@ def _export_refinement_stls(doc, body, stl_dir: str, tmpl_trisurf: str,
         stl_out  = os.path.join(stl_dir, fname)
         tmpl_src = os.path.join(tmpl_trisurf, fname)
 
-        # ── Strategy 1: FreeCAD object label/name → References ───────────────
+        # ── Strategy 1: FreeCAD object label/name → References/ShapeRefs ─────
         match = None
+        match_refs_prop = None
         stem_clean = stem.replace("_", "").lower()
         for obj in doc.Objects:
             obj_clean = obj.Label.replace(" ", "").replace("_", "").lower()
@@ -879,13 +908,15 @@ def _export_refinement_stls(doc, body, stl_dir: str, tmpl_trisurf: str,
                     or obj.Label == stem
                     or obj.Name == stem
                     or obj_clean == stem_clean):
-                if hasattr(obj, "References") and getattr(obj, "References", []):
+                refs_prop = _refs_prop_name(obj)
+                if refs_prop is not None and getattr(obj, refs_prop, []):
                     match = obj
+                    match_refs_prop = refs_prop
                     break
 
         if match is not None:
             try:
-                faces = _get_faces_from_refs(match.References, doc)
+                faces = _get_faces_from_refs(getattr(match, match_refs_prop), doc)
                 if faces:
                     stl_str = _shape_to_ascii_stl(Part.makeCompound(faces), stem)
                     with open(stl_out, "w") as fh:
