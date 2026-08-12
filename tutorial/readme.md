@@ -4,17 +4,17 @@ Tutorial summary:
 <table>
   <tr>
     <td align="center">
-      <b>Topic 1</b><br>
+      <b>Bend pipe</b><br>
       <img src="example.gif" width="200" /><br>
       Description here
     </td>
     <td align="center">
-      <b>Topic 2</b><br>
+      <b>manifold</b><br>
       <img src="example.gif" width="200" /><br>
       Description here
     </td>
     <td align="center">
-      <b>Topic 3</b><br>
+      <b>tank</b><br>
       <img src="example.gif" width="200" /><br>
       Description here
     </td>
