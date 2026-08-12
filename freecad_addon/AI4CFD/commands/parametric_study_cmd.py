@@ -19,7 +19,6 @@ them with expressions (e.g. =Spreadsheet.pipe_radius).
 """
 
 import json
-import math
 import os
 import re
 import subprocess
@@ -45,9 +44,6 @@ from addon_config import build_parametric_sim_cmd, _WSL_PROJECT, _win_to_wsl, _w
 _DEFAULT_OUT = os.path.join(
     _WSL_PROJECT.replace("/mnt/e/", "E:\\").replace("/", "\\"),
     "parametric_study")
-
-# Windows path to openfoam_base/ for template picker
-_OPENFOAM_BASE_WIN = _WSL_PROJECT.replace("/mnt/e/", "E:\\").replace("/", "\\") + "\\openfoam_base"
 
 
 # ── Spreadsheet helpers ───────────────────────────────────────────────────────
@@ -521,62 +517,6 @@ def _patch_names_from_template(tmpl_trisurf: str) -> list:
         f[:-4] for f in os.listdir(tmpl_trisurf)
         if f.lower().startswith("patch_") and f.lower().endswith(".stl")
     )
-
-
-def _wall_patch_from_createpatch(tmpl_base: str) -> str | None:
-    """Return the patch_N prefix that maps to 'wall' in createPatchDict.
-
-    tmpl_base: the root template directory (containing case/system/ or system/).
-    Searches inside each patch definition block for 'name wall;' and extracts
-    the corresponding patch_N number from its 'patches (...)' field.
-    """
-    import re
-    for rel in ("case/system/createPatchDict", "system/createPatchDict"):
-        path = os.path.join(tmpl_base, rel)
-        if not os.path.isfile(path):
-            continue
-        try:
-            content = open(path, encoding="utf-8", errors="replace").read()
-            content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
-            content = re.sub(r"//[^\n]*", "", content)
-
-            # Locate the patches ( ... ) list
-            pm = re.search(r"\bpatches\s*\(", content)
-            if not pm:
-                continue
-            start, depth, i = pm.end(), 1, pm.end()
-            while i < len(content) and depth > 0:
-                if content[i] == "(":
-                    depth += 1
-                elif content[i] == ")":
-                    depth -= 1
-                i += 1
-            patches_body = content[start: i - 1]
-
-            # Walk each { ... } sub-block
-            j = 0
-            while j < len(patches_body):
-                brace = patches_body.find("{", j)
-                if brace == -1:
-                    break
-                depth2, k = 1, brace + 1
-                while k < len(patches_body) and depth2 > 0:
-                    if patches_body[k] == "{":
-                        depth2 += 1
-                    elif patches_body[k] == "}":
-                        depth2 -= 1
-                    k += 1
-                block = patches_body[brace + 1: k - 1]
-                j = k
-
-                nm = re.search(r"\bname\s+(\w+)\s*;", block)
-                if nm and nm.group(1) == "wall":
-                    pm2 = re.search(r'"?patch_(\d+)', block)
-                    if pm2:
-                        return f"patch_{pm2.group(1)}"
-        except Exception:
-            pass
-    return None
 
 
 def _rebuild_body_geometry_stl(stl_dir: str, patch_names: list) -> None:
@@ -2000,10 +1940,6 @@ def _right_item(text: str) -> QtWidgets.QTableWidgetItem:
     it = QtWidgets.QTableWidgetItem(text)
     it.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
     return it
-
-
-# Keep alias so existing tree items that reference the old name still work
-BendPipeParametricPanel = CFDParametricPanel
 
 
 # ── Command ───────────────────────────────────────────────────────────────────

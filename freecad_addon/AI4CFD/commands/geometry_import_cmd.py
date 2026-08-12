@@ -160,17 +160,3 @@ class GeometryImportPanel:
 
     def reject(self) -> None:
         FreeCADGui.Control.closeDialog()
-
-
-class GeometryImportCommand:
-    def GetResources(self) -> dict:
-        return {
-            "MenuText": "Geometry Import",
-            "ToolTip":  "Import or create geometry for CFD simulation",
-        }
-
-    def IsActive(self) -> bool:
-        return True
-
-    def Activated(self) -> None:
-        FreeCADGui.Control.showDialog(GeometryImportPanel())

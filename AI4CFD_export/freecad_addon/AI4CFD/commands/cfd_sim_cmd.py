@@ -474,17 +474,3 @@ class CFDSimulationPanel:
 
     def reject(self) -> None:
         self.form.close()
-
-
-class CFDSimulationCommand:
-    def GetResources(self) -> dict:
-        return {
-            "MenuText": "CFD Simulation",
-            "ToolTip":  "Set up an OpenFOAM simulation (baseline model or CfdOF)",
-        }
-
-    def IsActive(self) -> bool:
-        return True
-
-    def Activated(self) -> None:
-        FreeCADGui.Control.showDialog(CFDSimulationPanel())

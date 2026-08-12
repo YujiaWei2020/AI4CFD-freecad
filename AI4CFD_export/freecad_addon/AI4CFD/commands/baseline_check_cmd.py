@@ -252,17 +252,3 @@ class BaselineCheckPanel:
 
     def reject(self):
         FreeCADGui.Control.closeDialog()
-
-
-# ── Command ───────────────────────────────────────────────────────────────────
-
-class BaselineCheckCommand:
-    def GetResources(self):
-        return {"MenuText": "Baseline Validation",
-                "ToolTip":  "Set baseline model directory and confirm physics readiness"}
-
-    def IsActive(self):
-        return True
-
-    def Activated(self):
-        FreeCADGui.Control.showDialog(BaselineCheckPanel())
