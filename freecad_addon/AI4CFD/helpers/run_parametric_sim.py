@@ -956,7 +956,9 @@ def _patch_inlet_velocity(solv_dir: str, params: dict) -> None:
         raw_alias = False   # already in m/s from CfdOF getValueAs("m/s")
     else:
         vel_key = next(
-            (k for k in params if _re.search(r'vel(ocity)?|speed', k, _re.IGNORECASE)),
+            (k for k, v in params.items()
+             if isinstance(v, (int, float))
+             and _re.search(r'vel(ocity)?|speed', k, _re.IGNORECASE)),
             None,
         )
         if vel_key is None:

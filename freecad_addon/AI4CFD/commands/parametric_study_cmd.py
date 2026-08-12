@@ -1074,7 +1074,10 @@ class _BatchWorker(QObject):
         self.sim_started.emit(idx + 1, total)
         self.line_ready.emit(
             f"\n─── Sim {idx+1}/{total}  [{os.path.basename(case_dir)}] ───\n" +
-            "\n".join(f"  {k} = {v:.4g}" for k, v in params.items())
+            "\n".join(
+                f"  {k} = {v:.4g}" if isinstance(v, (int, float)) else f"  {k} = {v}"
+                for k, v in params.items()
+            )
         )
         wsl_case = (_win_to_wsl(case_dir)
                     if _ON_WINDOWS and len(case_dir) > 1 and case_dir[1] == ":"
