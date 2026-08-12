@@ -776,7 +776,7 @@ def _run_inference_postprocess(case_dir: str, solv_dir: str) -> None:
     print("[AI4CFD] Creating inference .npy...", flush=True)
     try:
         from config import INFERENCE_DIR
-        from utilities.prepare_dataset import DatasetPreparer
+        from utilities.prepare_npy import DatasetPreparer
         os.makedirs(INFERENCE_DIR, exist_ok=True)
         preparer = DatasetPreparer(
             results_dir = solv_dir,                    # not used — we call process_case directly
@@ -842,6 +842,96 @@ def _patch_snappy_location(case_dir: str, mesh_dir: str) -> None:
                 print(f"[AI4CFD] locationInMesh pattern not found in {spath}", flush=True)
     except Exception as exc:
         print(f"[AI4CFD] Warning: locationInMesh patch failed: {exc}", flush=True)
+
+
+def _patch_named_boundary_velocities(solv_dir: str, params: dict) -> bool:
+    """Rewrite each boundaryField block's velocity vectors by patch name.
+
+    Unlike _patch_inlet_velocity() below (which infers "the" inlet direction
+    from internalField and only rescales vectors already pointing that way),
+    this patches each patch's OWN vectors to its OWN recorded speed while
+    preserving that patch's own template direction. That distinction matters
+    whenever a case has more than one velocity-driven boundary pointing in
+    different directions — e.g. a manifold's main 'inlet' flowing along +X
+    plus several 'pumpNN' legs entering along +Y. The direction-matching
+    heuristic silently skips every boundary that doesn't happen to align
+    with internalField, so pumpNN would stay frozen at the template's value
+    no matter what the linked spreadsheet alias is set to.
+
+    params['_boundary_velocities_ms'] is {patch_name: velocity_m_s}, written
+    by parametric_study_cmd.py's _read_all_cfdof_boundary_velocities() from
+    each CfdOF boundary object's Label (which CfdOF writes verbatim as the
+    OpenFOAM patch name) and its expression-linked VelocityMag.
+
+    Returns True if at least one patch was updated — callers use this to
+    skip the older global-value fallback below, which would otherwise
+    redundantly (if harmlessly) re-scale whichever single patch happens to
+    match its direction heuristic.
+    """
+    import re as _re
+
+    vels = params.get("_boundary_velocities_ms")
+    if not vels:
+        return False
+
+    u_path = os.path.join(solv_dir, "0", "U")
+    if not os.path.isfile(u_path):
+        print("[AI4CFD] 0/U not found — named boundary velocity patch skipped",
+              flush=True)
+        return False
+
+    with open(u_path, encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+
+    _VEC_RE = _re.compile(
+        r'(uniform\s+\(\s*)'
+        r'(-?[\d.eE+\-]+)(\s+)(-?[\d.eE+\-]+)(\s+)(-?[\d.eE+\-]+)'
+        r'(\s*\))'
+    )
+
+    patched = 0
+    for patch_name, vel_ms in vels.items():
+        m = _re.search(rf'\b{_re.escape(patch_name)}\b\s*\n?\s*\{{', text)
+        if not m:
+            continue
+        start, depth, i = m.end(), 1, m.end()
+        while i < len(text) and depth > 0:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        block = text[start: i - 1]
+
+        count = [0]
+
+        def _replace(mo, vel_ms=vel_ms):
+            vx, vy, vz = float(mo.group(2)), float(mo.group(4)), float(mo.group(6))
+            vmag = (vx**2 + vy**2 + vz**2) ** 0.5
+            if vmag < 1e-12:
+                return mo.group(0)          # zero vector (wall) — leave alone
+            scale = vel_ms / vmag
+            count[0] += 1
+            return (f"{mo.group(1)}{vx*scale:.6g}{mo.group(3)}"
+                    f"{vy*scale:.6g}{mo.group(5)}{vz*scale:.6g}{mo.group(7)}")
+
+        new_block = _VEC_RE.sub(_replace, block)
+        if count[0] == 0:
+            continue
+
+        text = text[:start] + new_block + text[i - 1:]
+        patched += count[0]
+        print(f"[AI4CFD] 0/U: patch '{patch_name}' -> {vel_ms:.6g} m/s "
+              f"({count[0]} vector(s))", flush=True)
+
+    if patched == 0:
+        print("[AI4CFD] 0/U: no named boundaryField blocks matched "
+              "_boundary_velocities_ms", flush=True)
+        return False
+
+    with open(u_path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return True
 
 
 def _patch_inlet_velocity(solv_dir: str, params: dict) -> None:
@@ -1201,7 +1291,7 @@ def _run_split(case_dir: str, template_dir: str, num_cores: int,
     # (BC patching, potentialFoam) relies on 0/ being mesh-size independent.
     _reset_stale_nonuniform_fields(os.path.join(solv_dir, "0"))
 
-    # Patch locationInMesh so snappyHexMesh starts inside the new pipe geometry
+    # Patch locationInMesh so snappyHexMesh starts inside the new geometry
     _patch_snappy_location(case_dir, mesh_dir)
 
     # ── 4. Write our STLs into meshCase/constant/triSurface/ ──────────────────
@@ -1333,7 +1423,8 @@ def _run_split(case_dir: str, template_dir: str, num_cores: int,
     # ── 10b. Patch inlet velocity / flow rate from expression-linked CfdOF BC
     #        values (fallback path only — the CfdOF full-case write already
     #        embeds the correct value when that path succeeds).
-    _patch_inlet_velocity(solv_dir, params or {})
+    if not _patch_named_boundary_velocities(solv_dir, params or {}):
+        _patch_inlet_velocity(solv_dir, params or {})
     _patch_inlet_flow_rate(solv_dir, params or {})
 
     # ── 11. renumberMesh — improve solver convergence ─────────────────────────
@@ -1532,7 +1623,8 @@ def _run_single(case_dir: str, template_dir: str, num_cores: int,
         _require("createPatch -overwrite", case_dir)
 
     # Patch inlet velocity / flow rate from expression-linked CfdOF BC values
-    _patch_inlet_velocity(case_dir, params or {})
+    if not _patch_named_boundary_velocities(case_dir, params or {}):
+        _patch_inlet_velocity(case_dir, params or {})
     _patch_inlet_flow_rate(case_dir, params or {})
 
     _run("renumberMesh -overwrite", case_dir)

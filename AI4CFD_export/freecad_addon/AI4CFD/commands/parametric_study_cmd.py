@@ -207,6 +207,37 @@ def _read_cfdof_inlet_flow_rate(doc) -> float | None:
     return None
 
 
+def _read_all_cfdof_boundary_velocities(doc) -> dict:
+    """Return {patch_name: velocity_m_s} for every inlet/outlet BC object.
+
+    _read_cfdof_inlet_velocity() only returns the FIRST inlet-type object it
+    finds, which silently drops every other velocity-driven boundary in a
+    multi-inlet case (e.g. a manifold with a main 'inlet' plus 'pump01'..
+    'pump04' branches, each linked to a different — or the same — spreadsheet
+    alias). CfdOF writes each boundary object's Label verbatim as the
+    OpenFOAM patch name, so keying by Label lets run_parametric_sim.py patch
+    each named boundaryField block in 0/U individually instead of relying on
+    a single global value + direction-matching heuristic (which only works
+    when every inlet happens to point the same way as internalField).
+    """
+    out = {}
+    for obj in doc.Objects:
+        if getattr(obj, "BoundaryType", "") not in ("inlet", "outlet"):
+            continue
+        vel = getattr(obj, "VelocityMag", None)
+        if vel is None:
+            continue
+        try:
+            v = float(vel.getValueAs("m/s"))
+        except AttributeError:
+            try:
+                v = float(vel)
+            except Exception:
+                continue
+        out[obj.Label] = v
+    return out
+
+
 def _import_cfdof(name: str):
     """Import a CfdOF module by trying 'CfdOF.<name>' then '<name>' directly."""
     for full in (f"CfdOF.{name}", name):
@@ -1684,6 +1715,17 @@ class CFDParametricPanel:
                     params["_inlet_velocity_ms"] = cfdof_vel
                     FreeCAD.Console.PrintMessage(
                         f"AI4CFD: CfdOF inlet velocity = {cfdof_vel:.4g} m/s "
+                        f"(case {i+1})\n")
+
+                # Per-patch velocities — needed whenever a case has more than
+                # one velocity-driven boundary (e.g. a manifold's main inlet
+                # plus several pump legs pointing in different directions).
+                # _inlet_velocity_ms above only ever captures ONE of them.
+                all_vels = _read_all_cfdof_boundary_velocities(doc)
+                if all_vels:
+                    params["_boundary_velocities_ms"] = all_vels
+                    FreeCAD.Console.PrintMessage(
+                        f"AI4CFD: CfdOF boundary velocities = {all_vels} "
                         f"(case {i+1})\n")
 
                 # VolFlowRate exists (defaulted to 0) on every inlet BC object
