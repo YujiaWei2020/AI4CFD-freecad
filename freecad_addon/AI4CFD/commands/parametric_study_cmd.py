@@ -138,21 +138,70 @@ def _set_aliases(sheet, params: dict) -> None:
 # ── CfdOF full-case writer ────────────────────────────────────────────────────
 
 def _find_cfdof_mesh_obj(doc):
-    """Return the CfdOF mesh object (has CasePath + Mesh-like proxy)."""
+    """Return the CfdOF mesh object (Proxy class CfdMesh).
+
+    Older CfdOF exposed the mesh case directory via a mesh_obj.CasePath
+    property. This vendored version has no such property at all — the mesh
+    object only carries CaseName (a bare relative name like 'meshCase'),
+    and the actual directory is CfdTools.getOutputPath(analysis) joined
+    with that (see CfdMeshTools.writeMesh / _cfdof_mesh_case_dir below).
+    Detecting by Proxy class name instead — mirroring _find_cfdof_analysis
+    — finds the mesh object regardless of that property's presence, so it
+    no longer silently returns None on every document using this CfdOF
+    version (which was why the full CfdOF case writer always fell back to
+    the weaker STL-only export before).
+    """
     for obj in doc.Objects:
-        if not hasattr(obj, "CasePath"):
-            continue
-        proxy = getattr(obj, "Proxy", None)
-        if proxy is None:
-            continue
-        pname = type(proxy).__name__
-        if any(k in pname for k in ("Mesh", "Cart", "Snappy")):
-            return obj
-    # Fallback: any object with CasePath
-    for obj in doc.Objects:
-        if hasattr(obj, "CasePath"):
+        if type(getattr(obj, "Proxy", None)).__name__ == "CfdMesh":
             return obj
     return None
+
+
+def _find_cfdof_analysis(doc):
+    """Return the CfdOF analysis container (Proxy class CfdAnalysis).
+
+    Modern CfdOF's analysis object is an App::DocumentObjectGroupPython
+    whose Proxy class is CfdAnalysis.CfdAnalysis — not a Fem::FemAnalysis
+    object (that TypeId belongs to the FEM workbench). CfdOF itself
+    identifies it the same way; see CfdTools.getActiveAnalysis.
+    """
+    return next(
+        (o for o in doc.Objects
+         if type(getattr(o, "Proxy", None)).__name__ == "CfdAnalysis"),
+        None)
+
+
+def _import_cfdof_module(name: str):
+    """Import a CfdOF module (not a class from it) by trying both prefixes."""
+    for full in (f"CfdOF.{name}", name):
+        try:
+            return __import__(full, fromlist=[name])
+        except ImportError:
+            pass
+    return None
+
+
+def _cfdof_mesh_case_dir(doc) -> str:
+    """Return the CfdOF mesh case directory — what mesh_obj.CasePath used to be.
+
+    This CfdOF version computes it as CfdTools.getOutputPath(analysis)
+    joined with mesh_obj.CaseName rather than storing it directly on the
+    mesh object. Used wherever the panel auto-detects an already-meshed
+    CfdOF case to prefill the 'OF template' field.
+    """
+    mesh_obj = _find_cfdof_mesh_obj(doc)
+    analysis = _find_cfdof_analysis(doc)
+    if mesh_obj is None or analysis is None:
+        return ""
+    CfdTools = _import_cfdof_module("CfdTools")
+    if CfdTools is None:
+        return ""
+    try:
+        output_path = CfdTools.getOutputPath(analysis)
+    except Exception:
+        return ""
+    case_name = getattr(mesh_obj, "CaseName", "") or "meshCase"
+    return os.path.join(output_path, case_name)
 
 
 def _read_cfdof_inlet_velocity(doc) -> float | None:
@@ -308,16 +357,7 @@ def _write_case_via_cfdof(doc, case_dir: str) -> bool:
     Returns True on success.
     """
     try:
-        # Modern CfdOF's analysis container is an App::DocumentObjectGroupPython
-        # whose Proxy class is CfdAnalysis.CfdAnalysis — it is NOT a
-        # Fem::FemAnalysis object (that TypeId belongs to the FEM workbench).
-        # CfdOF itself identifies it via isinstance(obj.Proxy, CfdAnalysis)
-        # (see CfdTools.getActiveAnalysis); mirror that here by proxy class
-        # name so this keeps working across CfdOF versions/object types.
-        analysis = next(
-            (o for o in doc.Objects
-             if type(getattr(o, "Proxy", None)).__name__ == "CfdAnalysis"),
-            None)
+        analysis = _find_cfdof_analysis(doc)
         mesh_obj = _find_cfdof_mesh_obj(doc)
 
         if analysis is None or mesh_obj is None:
@@ -326,13 +366,14 @@ def _write_case_via_cfdof(doc, case_dir: str) -> bool:
                 "falling back to STL export\n")
             return False
 
-        orig_mesh_path   = getattr(mesh_obj, "CasePath", "")
         orig_output_path = getattr(analysis, "OutputPath", "")
-        # Both CfdMeshTools and CfdCaseWriterFoam read CfdTools.getOutputPath(analysis),
-        # which returns analysis.OutputPath — NOT mesh_obj.CasePath.  Set both so
-        # expression-linked BC values (e.g. =Spreadsheet.velocity on VelocityMag)
-        # propagate correctly to the per-case 0/U after doc.recompute().
-        mesh_obj.CasePath   = case_dir
+        # Both CfdMeshTools and CfdCaseWriterFoam resolve their working
+        # directory via CfdTools.getOutputPath(analysis) -> analysis.OutputPath
+        # (the mesh object has no CasePath property in this CfdOF version —
+        # its directory is output_path + mesh_obj.CaseName, e.g. 'meshCase',
+        # see _cfdof_mesh_case_dir). Setting this also makes expression-linked
+        # BC values (e.g. =Spreadsheet.velocity on VelocityMag) propagate
+        # correctly to the per-case 0/U after doc.recompute().
         analysis.OutputPath = case_dir
         FreeCAD.Console.PrintMessage(
             f"AI4CFD: writing CfdOF case → {case_dir}\n")
@@ -358,7 +399,6 @@ def _write_case_via_cfdof(doc, case_dir: str) -> bool:
             return True
 
         finally:
-            mesh_obj.CasePath   = orig_mesh_path
             analysis.OutputPath = orig_output_path
 
     except Exception as exc:
@@ -1394,22 +1434,19 @@ class CFDParametricPanel:
         self._refresh_count()
 
     def _auto_populate_template(self) -> None:
-        """Pre-fill the template field from the CfdOF mesh object's CasePath."""
+        """Pre-fill the template field from the CfdOF mesh case directory."""
         if self._tmpl_edit.text().strip():
             return  # user already set it
         doc = FreeCAD.activeDocument()
         if doc is None:
             return
-        mesh_obj = _find_cfdof_mesh_obj(doc)
-        if mesh_obj is None:
-            return
-        case_path = getattr(mesh_obj, "CasePath", "")
+        case_path = _cfdof_mesh_case_dir(doc)
         if _ON_WINDOWS and case_path.startswith("/mnt/"):
             case_path = _wsl_to_win(case_path)
         if case_path and os.path.isdir(case_path):
             self._tmpl_edit.setText(case_path)
             FreeCAD.Console.PrintMessage(
-                f"AI4CFD: template auto-set from CfdOF CasePath: {case_path}\n")
+                f"AI4CFD: template auto-set from CfdOF mesh case dir: {case_path}\n")
 
     def _browse_template(self) -> None:
         d = QtWidgets.QFileDialog.getExistingDirectory(
@@ -1735,8 +1772,7 @@ class CFDParametricPanel:
                     stl_dir  = os.path.join(case_dir, "constant", "triSurface")
                     tmpl_win = self._tmpl_edit.text().strip()
                     if not tmpl_win:
-                        mesh_obj = _find_cfdof_mesh_obj(doc)
-                        tmpl_win = getattr(mesh_obj, "CasePath", "") if mesh_obj else ""
+                        tmpl_win = _cfdof_mesh_case_dir(doc)
                     if _ON_WINDOWS and tmpl_win.startswith("/mnt/"):
                         tmpl_win = _wsl_to_win(tmpl_win)
                     tmpl_tri = None
@@ -1881,10 +1917,9 @@ class CFDParametricPanel:
 
         tmpl = self._template_wsl()
         if not tmpl:
-            # Auto-detect from CfdOF mesh object
+            # Auto-detect from CfdOF mesh case directory
             doc = FreeCAD.activeDocument()
-            mesh_obj = _find_cfdof_mesh_obj(doc) if doc else None
-            cfdof_path = getattr(mesh_obj, "CasePath", "") if mesh_obj else ""
+            cfdof_path = _cfdof_mesh_case_dir(doc) if doc else ""
             if cfdof_path:
                 tmpl = _win_to_wsl(cfdof_path) if _ON_WINDOWS else cfdof_path
         if not tmpl:
