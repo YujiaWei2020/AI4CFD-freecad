@@ -132,25 +132,6 @@ if not _NATIVE_PYTHON:
         pass
 
 _PARAMETRIC_SIM_HELPER = _WSL_PROJECT + "/freecad_addon/AI4CFD/helpers/run_parametric_sim.py"
-_GENERIC_SIM_HELPER    = _WSL_PROJECT + "/freecad_addon/AI4CFD/helpers/run_generic_sim.py"
-
-
-def build_generic_sim_cmd(case_name: str, params_json: str,
-                          num_cores: int = 1, max_iterations: int = 1000,
-                          module: str = "train",
-                          case_dir: str = None) -> list:
-    """Run the named simulator (airfoil, bendpipe, …) with JSON params."""
-    base = [
-        *_PY_BASE, _GENERIC_SIM_HELPER,
-        "--case-name",      case_name,
-        "--params",         params_json,
-        "--num-cores",      str(num_cores),
-        "--max-iterations", str(max_iterations),
-        "--module",         module,
-    ]
-    if case_dir:
-        base += ["--case-dir", case_dir]
-    return base
 
 
 def build_parametric_sim_cmd(case_dir: str, template_dir: str,
