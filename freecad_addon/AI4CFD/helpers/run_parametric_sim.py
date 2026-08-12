@@ -844,6 +844,153 @@ def _patch_snappy_location(case_dir: str, mesh_dir: str) -> None:
         print(f"[AI4CFD] Warning: locationInMesh patch failed: {exc}", flush=True)
 
 
+# Maps a CfdOF boundary-object property name to where it lives in the
+# per-case OpenFOAM 0/<field> files. This is the ONE place that needs
+# updating to teach the parametric exporter about a new field — the read
+# side (parametric_study_cmd.py's _read_all_expression_linked_properties)
+# captures ANY expression-linked property automatically, with no per-field
+# code there at all. Only the write side needs this table, because
+# OpenFOAM's file format gives no way to discover "which file and keyword
+# does property X correspond to" from the FreeCAD property name alone.
+#
+#   (of_file, of_key, kind)
+#     of_file: the field file under 0/ (e.g. 'U', 'nut', 'p')
+#     of_key:  the dict keyword to rewrite for 'scalar' kind (e.g. 'Ks');
+#              None for 'vector' kind, which doesn't use a fixed keyword.
+#     kind:
+#       'vector' — rescale every non-zero 'uniform (x y z)' found anywhere
+#                  in the patch's block to the new magnitude, preserving
+#                  each vector's own template direction. Matches how CfdOF
+#                  writes velocity BCs, which can duplicate the value into
+#                  both 'value' and 'normalVelocity.value'.
+#       'scalar' — rewrite the number following '<of_key> uniform '.
+#
+# Extend this table (and nothing else) to parametrize another field.
+_PROPERTY_OF_MAP = {
+    "VelocityMag":       ("U",   None,  "vector"),
+    "RoughnessHeight":   ("nut", "Ks",  "scalar"),
+    "RoughnessConstant": ("nut", "Cs",  "scalar"),
+}
+
+
+def _patch_named_boundary_properties(solv_dir: str, params: dict) -> bool:
+    """Generic per-patch property patcher, driven by _PROPERTY_OF_MAP.
+
+    This is the primary mechanism going forward, replacing the older
+    field-specific _patch_named_boundary_velocities / _patch_named_wall_
+    roughness pair below (both kept only as a fallback for params.json
+    written before this existed). params['_boundary_properties'] is
+    {patch_name: {property_name: value}}, written by
+    parametric_study_cmd.py's _read_all_expression_linked_properties() from
+    EVERY property with a live ExpressionEngine binding on EVERY CfdOF
+    boundary object — no per-field code needed on that side at all.
+
+    A captured property with no entry in _PROPERTY_OF_MAP is logged loudly
+    instead of silently doing nothing, so an unsupported parametrized field
+    is visible immediately instead of quietly failing to vary.
+    """
+    import re as _re
+
+    props_by_patch = params.get("_boundary_properties")
+    if not props_by_patch:
+        return False
+
+    # of_file -> patch_name -> [(kind, of_key, value), ...]
+    by_file: dict = {}
+    for patch_name, props in props_by_patch.items():
+        for prop_name, value in props.items():
+            mapping = _PROPERTY_OF_MAP.get(prop_name)
+            if mapping is None:
+                print(f"[AI4CFD] No OpenFOAM mapping for property "
+                      f"'{prop_name}' on patch '{patch_name}' — value "
+                      f"{value:.6g} NOT applied. Add it to _PROPERTY_OF_MAP "
+                      f"in run_parametric_sim.py to support it.", flush=True)
+                continue
+            of_file, of_key, kind = mapping
+            by_file.setdefault(of_file, {}).setdefault(patch_name, []) \
+                    .append((kind, of_key, value))
+
+    if not by_file:
+        return False
+
+    _VEC_RE = _re.compile(
+        r'(uniform\s+\(\s*)'
+        r'(-?[\d.eE+\-]+)(\s+)(-?[\d.eE+\-]+)(\s+)(-?[\d.eE+\-]+)'
+        r'(\s*\))'
+    )
+
+    any_patched = False
+    for of_file, patches in by_file.items():
+        f_path = os.path.join(solv_dir, "0", of_file)
+        if not os.path.isfile(f_path):
+            print(f"[AI4CFD] 0/{of_file} not found — skipping patch(es) "
+                  f"{list(patches)}", flush=True)
+            continue
+
+        with open(f_path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+
+        file_patched = 0
+        for patch_name, ops in patches.items():
+            m = _re.search(rf'\b{_re.escape(patch_name)}\b\s*\n?\s*\{{', text)
+            if not m:
+                continue
+            start, depth, i = m.end(), 1, m.end()
+            while i < len(text) and depth > 0:
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                i += 1
+            block = text[start: i - 1]
+            block_count = 0
+
+            for kind, of_key, value in ops:
+                if kind == "vector":
+                    def _replace_vec(mo, value=value):
+                        vx = float(mo.group(2))
+                        vy = float(mo.group(4))
+                        vz = float(mo.group(6))
+                        vmag = (vx**2 + vy**2 + vz**2) ** 0.5
+                        if vmag < 1e-12:
+                            return mo.group(0)      # zero vector — leave alone
+                        scale = value / vmag
+                        return (f"{mo.group(1)}{vx*scale:.6g}{mo.group(3)}"
+                                f"{vy*scale:.6g}{mo.group(5)}{vz*scale:.6g}"
+                                f"{mo.group(7)}")
+                    new_block, n = _VEC_RE.subn(_replace_vec, block)
+                elif kind == "scalar":
+                    new_block, n = _re.subn(
+                        rf'(\b{of_key}\s+uniform\s+)(-?[\d.eE+\-]+)',
+                        lambda mo, value=value: f"{mo.group(1)}{value:.6g}",
+                        block)
+                else:
+                    continue
+                if n:
+                    block = new_block
+                    block_count += n
+
+            if block_count == 0:
+                continue
+            text = text[:start] + block + text[i - 1:]
+            file_patched += block_count
+            ops_str = ", ".join(f"{of_key or '(vector)'}={value:.6g}"
+                                 for _, of_key, value in ops)
+            print(f"[AI4CFD] 0/{of_file}: patch '{patch_name}' -> {ops_str} "
+                  f"({block_count} value(s))", flush=True)
+
+        if file_patched:
+            with open(f_path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            any_patched = True
+
+    if not any_patched:
+        print("[AI4CFD] _boundary_properties present but nothing matched "
+              "any named boundaryField block", flush=True)
+
+    return any_patched
+
+
 def _patch_named_boundary_velocities(solv_dir: str, params: dict) -> bool:
     """Rewrite each boundaryField block's velocity vectors by patch name.
 
@@ -1496,13 +1643,16 @@ def _run_split(case_dir: str, template_dir: str, num_cores: int,
     else:
         print("[AI4CFD] No createPatchDict — skipping createPatch", flush=True)
 
-    # ── 10b. Patch inlet velocity / flow rate from expression-linked CfdOF BC
-    #        values (fallback path only — the CfdOF full-case write already
-    #        embeds the correct value when that path succeeds).
-    if not _patch_named_boundary_velocities(solv_dir, params or {}):
-        _patch_inlet_velocity(solv_dir, params or {})
+    # ── 10b. Patch expression-linked CfdOF boundary properties (fallback
+    #        path only — the CfdOF full-case write already embeds every
+    #        value correctly when that path succeeds). Generic mechanism
+    #        first; the field-specific ones are legacy fallbacks for
+    #        params.json written before _boundary_properties existed.
+    if not _patch_named_boundary_properties(solv_dir, params or {}):
+        if not _patch_named_boundary_velocities(solv_dir, params or {}):
+            _patch_inlet_velocity(solv_dir, params or {})
+        _patch_named_wall_roughness(solv_dir, params or {})
     _patch_inlet_flow_rate(solv_dir, params or {})
-    _patch_named_wall_roughness(solv_dir, params or {})
 
     # ── 11. renumberMesh — improve solver convergence ─────────────────────────
     if _has(solv_dir, "system", "decomposeParDict") or True:
@@ -1699,11 +1849,14 @@ def _run_single(case_dir: str, template_dir: str, num_cores: int,
     if _has(case_dir, "system", "createPatchDict"):
         _require("createPatch -overwrite", case_dir)
 
-    # Patch inlet velocity / flow rate from expression-linked CfdOF BC values
-    if not _patch_named_boundary_velocities(case_dir, params or {}):
-        _patch_inlet_velocity(case_dir, params or {})
+    # Patch expression-linked CfdOF boundary properties (generic mechanism
+    # first; the field-specific ones are legacy fallbacks for params.json
+    # written before _boundary_properties existed).
+    if not _patch_named_boundary_properties(case_dir, params or {}):
+        if not _patch_named_boundary_velocities(case_dir, params or {}):
+            _patch_inlet_velocity(case_dir, params or {})
+        _patch_named_wall_roughness(case_dir, params or {})
     _patch_inlet_flow_rate(case_dir, params or {})
-    _patch_named_wall_roughness(case_dir, params or {})
 
     _run("renumberMesh -overwrite", case_dir)
 

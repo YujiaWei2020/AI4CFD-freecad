@@ -256,37 +256,6 @@ def _read_cfdof_inlet_flow_rate(doc) -> float | None:
     return None
 
 
-def _read_all_cfdof_boundary_velocities(doc) -> dict:
-    """Return {patch_name: velocity_m_s} for every inlet/outlet BC object.
-
-    _read_cfdof_inlet_velocity() only returns the FIRST inlet-type object it
-    finds, which silently drops every other velocity-driven boundary in a
-    multi-inlet case (e.g. a manifold with a main 'inlet' plus 'pump01'..
-    'pump04' branches, each linked to a different — or the same — spreadsheet
-    alias). CfdOF writes each boundary object's Label verbatim as the
-    OpenFOAM patch name, so keying by Label lets run_parametric_sim.py patch
-    each named boundaryField block in 0/U individually instead of relying on
-    a single global value + direction-matching heuristic (which only works
-    when every inlet happens to point the same way as internalField).
-    """
-    out = {}
-    for obj in doc.Objects:
-        if getattr(obj, "BoundaryType", "") not in ("inlet", "outlet"):
-            continue
-        vel = getattr(obj, "VelocityMag", None)
-        if vel is None:
-            continue
-        try:
-            v = float(vel.getValueAs("m/s"))
-        except AttributeError:
-            try:
-                v = float(vel)
-            except Exception:
-                continue
-        out[obj.Label] = v
-    return out
-
-
 def _quantity_to_float(q, unit: str = None):
     """Convert a FreeCAD Quantity-like property value to float, or None."""
     if q is None:
@@ -302,35 +271,59 @@ def _quantity_to_float(q, unit: str = None):
         return None
 
 
-def _read_all_cfdof_wall_roughness(doc) -> dict:
-    """Return {patch_name: {'Ks': height_m, 'Cs': roughness_const}} per wall BC.
+def _read_all_expression_linked_properties(doc) -> dict:
+    """Return {patch_name: {property_name: value}} for every CfdOF boundary
+    property with a live ExpressionEngine binding (e.g. an expression like
+    =Spreadsheet.B7 set via FreeCAD's expression editor).
 
-    Mirrors _read_all_cfdof_boundary_velocities() but for OpenFOAM's
-    nutkRoughWallFunction (written to 0/nut). Nothing previously read
-    RoughnessHeight/RoughnessConstant at all, so the STL-only fallback
-    export copied 0/nut from the template unchanged for every case — a
-    spreadsheet alias expression-linked to e.g. RoughnessConstant (Cs) had
-    no effect whatsoever on the exported case, the same class of bug as the
-    velocity one above but for a field this addon never patched at all.
+    This replaces hand-picking specific properties one at a time (the
+    previous _read_all_cfdof_boundary_velocities / _read_all_cfdof_wall_
+    roughness pair) — whatever the user links to a spreadsheet alias is
+    captured automatically here, with no further code needed on this side
+    of the pipeline for a new field. What run_parametric_sim.py actually
+    DOES with each captured property still depends on a small mapping
+    table there (_PROPERTY_OF_MAP) — OpenFOAM's file format gives no way
+    to discover "which file and keyword does property X correspond to"
+    from the FreeCAD property name alone. A captured property with no
+    entry in that table is logged clearly during case prep instead of
+    silently doing nothing, which was the whole class of bug this exists
+    to close off.
 
-    A boundary marked DefaultBoundary=True also gets mirrored onto the
+    CfdOF writes each boundary object's Label verbatim as the OpenFOAM
+    patch name, so results are keyed by Label. A boundary marked
+    DefaultBoundary=True also has its properties mirrored onto the
     synthetic 'defaultFaces' patch that CfdOF's mesher assigns any
-    unclaimed face to — the fallback template ships an identical
-    'defaultFaces' nutkRoughWallFunction block for the same reason.
+    unclaimed face to (the fallback template ships an identical
+    'defaultFaces' block for the same boundary for exactly this reason).
     """
     out = {}
     default_label = None
     for obj in doc.Objects:
-        if getattr(obj, "BoundaryType", "") != "wall":
+        if not hasattr(obj, "BoundaryType"):
             continue
-        ks = _quantity_to_float(getattr(obj, "RoughnessHeight", None), "m")
-        cs = _quantity_to_float(getattr(obj, "RoughnessConstant", None))
-        if ks is None or cs is None:
+        engine = getattr(obj, "ExpressionEngine", None)
+        if not engine:
             continue
-        out[obj.Label] = {"Ks": ks, "Cs": cs}
-        if getattr(obj, "DefaultBoundary", False):
-            default_label = obj.Label
-    if default_label is not None:
+        props = {}
+        for entry in engine:
+            try:
+                path = entry[0]
+            except (TypeError, IndexError):
+                continue
+            prop_name = str(path).strip("<>")
+            if "." in prop_name:
+                # Nested paths (e.g. 'Placement.Base.x') aren't boundary-
+                # condition scalars/quantities _PROPERTY_OF_MAP knows about.
+                continue
+            val = _quantity_to_float(getattr(obj, prop_name, None))
+            if val is None:
+                continue
+            props[prop_name] = val
+        if props:
+            out[obj.Label] = props
+            if getattr(obj, "DefaultBoundary", False):
+                default_label = obj.Label
+    if default_label is not None and default_label in out:
         out["defaultFaces"] = out[default_label]
     return out
 
@@ -1816,24 +1809,17 @@ class CFDParametricPanel:
                         f"AI4CFD: CfdOF inlet velocity = {cfdof_vel:.4g} m/s "
                         f"(case {i+1})\n")
 
-                # Per-patch velocities — needed whenever a case has more than
-                # one velocity-driven boundary (e.g. a manifold's main inlet
-                # plus several pump legs pointing in different directions).
-                # _inlet_velocity_ms above only ever captures ONE of them.
-                all_vels = _read_all_cfdof_boundary_velocities(doc)
-                if all_vels:
-                    params["_boundary_velocities_ms"] = all_vels
+                # Every expression-linked boundary property, captured
+                # generically by patch name — covers velocity, roughness,
+                # and any other CfdOF boundary property the user links to a
+                # spreadsheet alias, with no per-field code needed here.
+                # _inlet_velocity_ms above only ever captures ONE boundary's
+                # velocity; this captures every property on every boundary.
+                all_props = _read_all_expression_linked_properties(doc)
+                if all_props:
+                    params["_boundary_properties"] = all_props
                     FreeCAD.Console.PrintMessage(
-                        f"AI4CFD: CfdOF boundary velocities = {all_vels} "
-                        f"(case {i+1})\n")
-
-                # Per-patch wall roughness (Ks/Cs for nutkRoughWallFunction in
-                # 0/nut) — same rationale as the velocities above.
-                all_rough = _read_all_cfdof_wall_roughness(doc)
-                if all_rough:
-                    params["_wall_roughness"] = all_rough
-                    FreeCAD.Console.PrintMessage(
-                        f"AI4CFD: CfdOF wall roughness = {all_rough} "
+                        f"AI4CFD: CfdOF boundary properties = {all_props} "
                         f"(case {i+1})\n")
 
                 # VolFlowRate exists (defaulted to 0) on every inlet BC object
