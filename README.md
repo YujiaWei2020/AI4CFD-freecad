@@ -1,6 +1,6 @@
 # AI4CFD-freecad
 
-> AI-driven design space search with CFD simulation, built on top of [FreeCAD](https://www.freecad.org/). Automatically explores design parameters and uses physics-informed AI to find optimal geometries through hydrodynamic analysis.
+> AI-driven design space search with CFD simulation, built on top of [FreeCAD](https://www.freecad.org/). Automatically explores design parameters and uses physics-informed AI to find optimal geometries through CFD analysis.
 
 ---
 
