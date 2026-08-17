@@ -54,15 +54,18 @@ class AI4CFDWorkbench(FreeCADGui.Workbench):
                 FreeCAD.Console.PrintMessage("AI4CFD model tree initialised.\n")
 
         from commands.parametric_study_cmd import BendPipeParametricCommand
+        from commands.verification_cmd import VerificationCommand
 
         FreeCADGui.addCommand("AI4CFD_GeometryContainer", GeometryContainerCmd())
         FreeCADGui.addCommand("AI4CFD_BendPipeParametric", BendPipeParametricCommand())
+        FreeCADGui.addCommand("AI4CFD_Verification", VerificationCommand())
 
-        self.appendToolbar("AI4CFD", ["AI4CFD_GeometryContainer"])
+        self.appendToolbar("AI4CFD", ["AI4CFD_GeometryContainer", "AI4CFD_Verification"])
 
         self.appendMenu("AI4CFD", ["AI4CFD_GeometryContainer"])
         self.appendMenu(["AI4CFD", "Parametric Studies"],
                         ["AI4CFD_BendPipeParametric"])
+        self.appendMenu("AI4CFD", ["AI4CFD_Verification"])
 
     def Activated(self) -> None:
         doc = FreeCAD.activeDocument()

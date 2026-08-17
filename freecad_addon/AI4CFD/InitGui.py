@@ -14,6 +14,10 @@ except NameError:
 if _ADDON_DIR not in sys.path:
     sys.path.insert(0, _ADDON_DIR)
 
+_VENDOR_CFDOF_DIR = os.path.join(_ADDON_DIR, "vendor", "CfdOF")
+if os.path.isdir(_VENDOR_CFDOF_DIR) and _VENDOR_CFDOF_DIR not in sys.path:
+    sys.path.insert(0, _VENDOR_CFDOF_DIR)
+
 
 class AI4CFDWorkbench(FreeCADGui.Workbench):
     MenuText = "AI4CFD"
@@ -50,15 +54,18 @@ class AI4CFDWorkbench(FreeCADGui.Workbench):
                 FreeCAD.Console.PrintMessage("AI4CFD model tree initialised.\n")
 
         from commands.parametric_study_cmd import BendPipeParametricCommand
+        from commands.verification_cmd import VerificationCommand
 
         FreeCADGui.addCommand("AI4CFD_GeometryContainer", GeometryContainerCmd())
         FreeCADGui.addCommand("AI4CFD_BendPipeParametric", BendPipeParametricCommand())
+        FreeCADGui.addCommand("AI4CFD_Verification", VerificationCommand())
 
-        self.appendToolbar("AI4CFD", ["AI4CFD_GeometryContainer"])
+        self.appendToolbar("AI4CFD", ["AI4CFD_GeometryContainer", "AI4CFD_Verification"])
 
         self.appendMenu("AI4CFD", ["AI4CFD_GeometryContainer"])
         self.appendMenu(["AI4CFD", "Parametric Studies"],
                         ["AI4CFD_BendPipeParametric"])
+        self.appendMenu("AI4CFD", ["AI4CFD_Verification"])
 
     def Activated(self) -> None:
         doc = FreeCAD.activeDocument()
@@ -93,5 +100,26 @@ except NameError:
         FreeCAD.getUserAppDataDir(), "Mod", "AI4CFD",
         "icons", "ai4cfd_logo.svg",
     )
+
+# Register the bundled CfdOF workbench (vendored under vendor/CfdOF/) so it's
+# available with no separate CfdOF install. CfdOF's Init.py/InitGui.py are
+# written to be exec()'d by FreeCAD's own Mod-folder loader — which injects
+# FreeCAD/FreeCADGui/Workbench as globals — so we replicate that here rather
+# than hand-porting their registration logic (keeps the vendored files
+# byte-for-byte diffable against upstream).
+if os.path.isdir(_VENDOR_CFDOF_DIR):
+    try:
+        _cfdof_ns = {
+            "FreeCAD": FreeCAD,
+            "FreeCADGui": FreeCADGui,
+            "Workbench": FreeCADGui.Workbench,
+        }
+        for _script in ("Init.py", "InitGui.py"):
+            _path = os.path.join(_VENDOR_CFDOF_DIR, _script)
+            with open(_path, encoding="utf-8") as _fh:
+                exec(compile(_fh.read(), _path, "exec"), _cfdof_ns)
+        FreeCAD.Console.PrintMessage("AI4CFD: bundled CfdOF workbench registered.\n")
+    except Exception as exc:
+        FreeCAD.Console.PrintWarning(f"AI4CFD: bundled CfdOF failed to load: {exc}\n")
 
 FreeCADGui.addWorkbench(AI4CFDWorkbench())

@@ -6,7 +6,8 @@ Tree structure:
   └── Physical Model                       (DocumentObjectGroup)
       ├── CFD Simulation                   (FeaturePython)
       │   └── Baseline Validation          (FeaturePython)
-      └── CFD Parametric Study             (FeaturePython)
+      ├── CFD Parametric Study             (FeaturePython)
+      └── Verification                     (FeaturePython)
 
 Double-clicking any leaf item opens the corresponding task panel.
 """
@@ -43,6 +44,7 @@ _PANEL_MAP = {
                                   {"floating": True}),
     "AI4CFD_BaselineCheck":      ("commands.baseline_check_cmd",   "BaselineCheckPanel"),
     "AI4CFD_CFDParam":           ("commands.parametric_study_cmd", "CFDParametricPanel"),
+    "AI4CFD_Verification":       ("commands.verification_cmd",     "VerificationPanel"),
 }
 
 # Keeps references to floating windows alive (prevents garbage collection)
@@ -267,5 +269,6 @@ def build_tree(doc) -> None:
     cfd_sim = _get_or_create_geo_tool(doc, "AI4CFD_CFDSim",   "CFD Simulation",       model_grp)
     _get_or_create_tool(doc, "AI4CFD_BaselineCheck", "Baseline Validation",  cfd_sim)
     _get_or_create_tool(doc, "AI4CFD_CFDParam",      "CFD Parametric Study", model_grp)
+    _get_or_create_tool(doc, "AI4CFD_Verification",  "Verification",        model_grp)
 
     doc.recompute()

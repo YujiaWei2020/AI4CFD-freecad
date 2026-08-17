@@ -41,9 +41,14 @@ except ImportError:
 from addon_config import build_parametric_sim_cmd, _WSL_PROJECT, _win_to_wsl, _wsl_to_win, _ON_WINDOWS
 
 # Default output root inside the project (Windows path)
-_DEFAULT_OUT = os.path.join(
-    _WSL_PROJECT.replace("/mnt/e/", "E:\\").replace("/", "\\"),
-    "parametric_study")
+_OUT_ROOT = _WSL_PROJECT.replace("/mnt/e/", "E:\\").replace("/", "\\")
+
+
+def _default_out_dir(subdir: str) -> str:
+    return os.path.join(_OUT_ROOT, subdir)
+
+
+_DEFAULT_OUT = _default_out_dir("parametric_study")
 
 
 # ── Spreadsheet helpers ───────────────────────────────────────────────────────
@@ -151,6 +156,37 @@ def _find_cfdof_mesh_obj(doc):
         if type(getattr(obj, "Proxy", None)).__name__ == "CfdMesh":
             return obj
     return None
+
+
+# Synthetic parameter name used by mesh_param_source studies (Verification) —
+# not a spreadsheet alias, just the key used in self._rows / params.json.
+_MESH_PARAM_ALIAS = "characteristic_length_max"
+
+
+def _read_characteristic_length_max_mm(mesh_obj) -> float:
+    """Current CfdOF CharacteristicLengthMax in mm.
+
+    CharacteristicLengthMax defaults to "0 m" (= auto). CfdMeshTools itself
+    never writes an auto-computed value back onto the property — it just
+    computes one internally each time a mesh is written (2% of the bounding
+    box diagonal, capped at 40% of the smallest extent — see
+    CfdMeshTools.__init__). Replicated here so "current" is a real, usable
+    number to build a min/max sweep around even when the user has left this
+    on auto rather than setting it explicitly.
+    """
+    try:
+        cl = FreeCAD.Units.Quantity(mesh_obj.CharacteristicLengthMax).Value
+    except Exception:
+        cl = 0.0
+    if cl > 0.0:
+        return cl
+    part_obj = getattr(mesh_obj, "Part", None)
+    if part_obj is not None and hasattr(part_obj, "Shape"):
+        bb = part_obj.Shape.BoundBox
+        cl_bound_mag = (bb.XLength**2 + bb.YLength**2 + bb.ZLength**2) ** 0.5
+        cl_bound_min = min(bb.XLength, bb.YLength, bb.ZLength)
+        return min(0.02 * cl_bound_mag, 0.4 * cl_bound_min)
+    return 1.0  # last-resort fallback — no Part/Shape to size against
 
 
 def _find_cfdof_analysis(doc):
@@ -1181,12 +1217,29 @@ class _BatchWorker(QObject):
 _VARY_BG  = QColor("#e3f2fd")
 _FIXED_BG = QColor("#ffffff")
 
+# Property name used to persist panel configuration onto the tree object that
+# opened it (see _save_state/_restore_state) — shared by both the "CFD
+# Parametric Study" and "Verification" tree items / toolbar commands, each of
+# which gets its own object instance (and therefore its own saved state).
+_STATE_PROP = "AI4CFD_PanelState"
+
 
 class CFDParametricPanel:
     """Two-phase parametric study: export geometry cases then run batch CFD."""
 
-    def __init__(self, obj_name: str = None) -> None:
-        self._obj_name  = obj_name
+    def __init__(self, obj_name: str = None,
+                 title: str = "CFD Parametric Study — AI4CFD",
+                 out_subdir: str = "parametric_study",
+                 default_steps: int = 5,
+                 sampling_heading: str = "2 · Sampling",
+                 grid_sweep_only: bool = False,
+                 param_heading: str = "1 · Parameters (from spreadsheet)",
+                 mesh_param_source: bool = False,
+                 default_n_workers: int = 4) -> None:
+        self._obj_name          = obj_name
+        self._default_steps     = default_steps
+        self._grid_sweep_only   = grid_sweep_only
+        self._mesh_param_source = mesh_param_source
         self._sheet_obj = None
         self._rows: dict  = {}
         self._varied: set = set()
@@ -1196,27 +1249,38 @@ class CFDParametricPanel:
         self._exporting = False
 
         self.form = QtWidgets.QWidget()
-        self.form.setWindowTitle("CFD Parametric Study — AI4CFD")
+        self.form.setWindowTitle(title)
         root = QtWidgets.QVBoxLayout(self.form)
         root.setSpacing(5)
 
         # ── Spreadsheet selector ──────────────────────────────────────────────
-        grp_ss = QtWidgets.QGroupBox("1 · Parameters (from spreadsheet)")
+        grp_ss = QtWidgets.QGroupBox(param_heading)
         lay_ss = QtWidgets.QVBoxLayout(grp_ss)
 
-        sel_row = QtWidgets.QHBoxLayout()
-        sel_row.addWidget(QtWidgets.QLabel("Spreadsheet:"))
+        # self._sheet_combo/self._on_sheet_changed always exist (other methods
+        # reference them unconditionally) but are only shown/wired to the UI
+        # when parameters come from a spreadsheet — mesh_param_source studies
+        # read a single mesh property directly instead (see
+        # _populate_mesh_param_table).
         self._sheet_combo = QtWidgets.QComboBox()
         self._sheet_combo.setToolTip(
             "Numeric aliases in this spreadsheet become the study parameters.\n"
             "Link geometry dimensions to aliases with expressions like  =Spreadsheet.pipe_radius")
         self._sheet_combo.currentIndexChanged.connect(self._on_sheet_changed)
-        sel_row.addWidget(self._sheet_combo, 1)
-        ref_btn = QtWidgets.QPushButton("↻")
-        ref_btn.setFixedWidth(28)
-        ref_btn.clicked.connect(self._populate_sheet_combo)
-        sel_row.addWidget(ref_btn)
-        lay_ss.addLayout(sel_row)
+        if mesh_param_source:
+            lay_ss.addWidget(QtWidgets.QLabel(
+                "<i>Sweeps the current CfdOF mesh object's "
+                "<b>Characteristic Length Max</b> — same geometry every case, "
+                "mesh density only.</i>"))
+        else:
+            sel_row = QtWidgets.QHBoxLayout()
+            sel_row.addWidget(QtWidgets.QLabel("Spreadsheet:"))
+            sel_row.addWidget(self._sheet_combo, 1)
+            ref_btn = QtWidgets.QPushButton("↻")
+            ref_btn.setFixedWidth(28)
+            ref_btn.clicked.connect(self._populate_sheet_combo)
+            sel_row.addWidget(ref_btn)
+            lay_ss.addLayout(sel_row)
 
         # Parameter table
         self._table = QtWidgets.QTableWidget(0, 6)
@@ -1238,7 +1302,7 @@ class CFDParametricPanel:
         root.addWidget(grp_ss)
 
         # ── Sampling ──────────────────────────────────────────────────────────
-        grp_samp  = QtWidgets.QGroupBox("2 · Sampling")
+        grp_samp  = QtWidgets.QGroupBox(sampling_heading)
         samp_vlay = QtWidgets.QVBoxLayout(grp_samp)   # owns the group box
 
         lay_samp = QtWidgets.QHBoxLayout()             # no parent yet
@@ -1246,17 +1310,26 @@ class CFDParametricPanel:
         self._rb_rand  = QtWidgets.QRadioButton("Random")
         self._rb_lhs   = QtWidgets.QRadioButton("Latin Hypercube")
         self._rb_sweep.setChecked(True)
+        # Random/LHS radios + the N= spin always exist (so _generate_tasks,
+        # _sync_steps_enabled etc. stay unconditional) but are only added to
+        # the visible layout when more than grid sweep is offered.
+        radios = (
+            (self._rb_sweep,) if grid_sweep_only
+            else (self._rb_sweep, self._rb_rand, self._rb_lhs)
+        )
         for rb in (self._rb_sweep, self._rb_rand, self._rb_lhs):
-            lay_samp.addWidget(rb)
             rb.toggled.connect(self._refresh_count)
             rb.toggled.connect(self._sync_steps_enabled)
-        lay_samp.addWidget(QtWidgets.QLabel("  N ="))
+        for rb in radios:
+            lay_samp.addWidget(rb)
         self._n_spin = QtWidgets.QSpinBox()
         self._n_spin.setRange(2, 2000)
         self._n_spin.setValue(20)
         self._n_spin.setEnabled(False)
         self._n_spin.valueChanged.connect(self._refresh_count)
-        lay_samp.addWidget(self._n_spin)
+        if not grid_sweep_only:
+            lay_samp.addWidget(QtWidgets.QLabel("  N ="))
+            lay_samp.addWidget(self._n_spin)
         samp_vlay.addLayout(lay_samp)
 
         count_row = QtWidgets.QHBoxLayout()            # no parent yet
@@ -1287,7 +1360,7 @@ class CFDParametricPanel:
 
         # Output directory
         out_row = QtWidgets.QHBoxLayout()
-        self._out_edit = QtWidgets.QLineEdit(_DEFAULT_OUT)
+        self._out_edit = QtWidgets.QLineEdit(_default_out_dir(out_subdir))
         out_row.addWidget(self._out_edit, 1)
         browse_btn = QtWidgets.QPushButton("…")
         browse_btn.setFixedWidth(28)
@@ -1339,7 +1412,7 @@ class CFDParametricPanel:
 
         self._n_workers = QtWidgets.QSpinBox()
         self._n_workers.setRange(1, 32)
-        self._n_workers.setValue(4)
+        self._n_workers.setValue(default_n_workers)
         lay_run.addRow("Parallel workers:", self._n_workers)
 
         self._cores_per = QtWidgets.QSpinBox()
@@ -1379,9 +1452,104 @@ class CFDParametricPanel:
         root.addWidget(grp_run)
 
         # ── Init ─────────────────────────────────────────────────────────────
-        self._populate_sheet_combo()
+        if mesh_param_source:
+            self._populate_mesh_param_table()
+        else:
+            self._populate_sheet_combo()
         self._populate_body_combo()
         self._auto_populate_template()
+        self._restore_state()
+
+    # ── State persistence (tied to the FreeCAD tree object) ────────────────────
+    # Saved on accept() (the task-panel OK button), restored here on next open.
+    # No-op whenever obj_name is None (there is no tree object to read/write).
+
+    def _serialize_state(self) -> dict:
+        return {
+            "sheet_name": self._sheet_combo.currentData(),
+            "body_name":  self._body_combo.currentData(),
+            "out_dir":    self._out_edit.text(),
+            "template":   self._tmpl_edit.text(),
+            "sampling":   ("sweep" if self._rb_sweep.isChecked() else
+                           "random" if self._rb_rand.isChecked() else "lhs"),
+            "n":          self._n_spin.value(),
+            "params": {
+                alias: {
+                    "varied": alias in self._varied,
+                    "fixed":  w["fixed"].value(),
+                    "min":    w["min"].value(),
+                    "max":    w["max"].value(),
+                    "steps":  w["steps"].value(),
+                }
+                for alias, w in self._rows.items()
+            },
+        }
+
+    def _save_state(self) -> None:
+        if not self._obj_name:
+            return
+        doc = FreeCAD.activeDocument()
+        obj = doc.getObject(self._obj_name) if doc else None
+        if obj is None:
+            return
+        if not hasattr(obj, _STATE_PROP):
+            obj.addProperty(
+                "App::PropertyString", _STATE_PROP, "AI4CFD",
+                "Saved panel configuration (JSON)")
+        setattr(obj, _STATE_PROP, json.dumps(self._serialize_state()))
+
+    def _restore_state(self) -> None:
+        if not self._obj_name:
+            return
+        doc = FreeCAD.activeDocument()
+        obj = doc.getObject(self._obj_name) if doc else None
+        if obj is None or not hasattr(obj, _STATE_PROP):
+            return
+        raw = getattr(obj, _STATE_PROP, "")
+        if not raw:
+            return
+        try:
+            state = json.loads(raw)
+        except Exception as exc:
+            FreeCAD.Console.PrintWarning(
+                f"AI4CFD: could not parse saved panel state for "
+                f"{self._obj_name}: {exc}\n")
+            return
+
+        sheet_idx = self._sheet_combo.findData(state.get("sheet_name"))
+        if sheet_idx >= 0:
+            self._sheet_combo.setCurrentIndex(sheet_idx)  # triggers _on_sheet_changed
+
+        body_idx = self._body_combo.findData(state.get("body_name"))
+        if body_idx >= 0:
+            self._body_combo.setCurrentIndex(body_idx)
+
+        if state.get("out_dir"):
+            self._out_edit.setText(state["out_dir"])
+        if state.get("template"):
+            self._tmpl_edit.setText(state["template"])
+
+        sampling = state.get("sampling")
+        if self._grid_sweep_only:
+            sampling = "sweep"  # only mode offered in this panel's UI
+        sampling_btn = {
+            "sweep": self._rb_sweep, "random": self._rb_rand, "lhs": self._rb_lhs,
+        }.get(sampling, self._rb_sweep)
+        sampling_btn.setChecked(True)
+        self._n_spin.setValue(state.get("n", self._n_spin.value()))
+
+        for alias, p in state.get("params", {}).items():
+            w = self._rows.get(alias)
+            if w is None:
+                continue  # alias no longer exists on the (re)selected spreadsheet
+            w["fixed"].setValue(p.get("fixed", w["fixed"].value()))
+            w["min"].setValue(p.get("min", w["min"].value()))
+            w["max"].setValue(p.get("max", w["max"].value()))
+            w["steps"].setValue(p.get("steps", w["steps"].value()))
+            if bool(p.get("varied")) != (alias in self._varied):
+                self._toggle_vary(w["row"], 0)
+
+        self._refresh_count()
 
     # ── Spreadsheet / body population ────────────────────────────────────────
 
@@ -1497,7 +1665,7 @@ class CFDParametricPanel:
 
             steps = QtWidgets.QSpinBox()
             steps.setRange(2, 200)
-            steps.setValue(5)
+            steps.setValue(self._default_steps)
             steps.setEnabled(False)
             steps.valueChanged.connect(self._refresh_count)
             self._table.setCellWidget(row, 5, steps)
@@ -1506,6 +1674,69 @@ class CFDParametricPanel:
                 "row": row, "fixed": fixed,
                 "min": mn, "max": mx, "steps": steps,
             }
+
+    def _populate_mesh_param_table(self) -> None:
+        """mesh_param_source variant of _build_param_table: one synthetic row
+        for the CfdOF mesh object's CharacteristicLengthMax, pre-set to
+        min=current/2, max=current*2, and started in "vary" mode — a mesh-
+        density sweep is the entire point of this panel.
+        """
+        self._table.setRowCount(0)
+        self._rows.clear()
+        self._varied.clear()
+
+        doc = FreeCAD.activeDocument()
+        mesh_obj = _find_cfdof_mesh_obj(doc) if doc else None
+        if mesh_obj is None or not hasattr(mesh_obj, "CharacteristicLengthMax"):
+            self._export_status.setText(
+                "No CfdOF mesh object found — set up meshing (CfdOF) on this "
+                "document first.")
+            return
+
+        cur_mm = _read_characteristic_length_max_mm(mesh_obj)
+
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+
+        name_item = QtWidgets.QTableWidgetItem(_MESH_PARAM_ALIAS)
+        name_item.setFlags(QtCore.Qt.ItemIsEnabled)
+        f = QFont(); f.setBold(True)
+        name_item.setFont(f)
+        self._table.setItem(row, 0, name_item)
+
+        cur_item = QtWidgets.QTableWidgetItem(f"{cur_mm:.4g}")
+        cur_item.setFlags(QtCore.Qt.ItemIsEnabled)
+        cur_item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self._table.setItem(row, 1, cur_item)
+
+        fixed = _dbl_spin(cur_mm)
+        fixed.valueChanged.connect(self._refresh_count)
+        self._table.setCellWidget(row, 2, fixed)
+
+        mn = _dbl_spin(cur_mm / 2.0)
+        mn.setEnabled(False)
+        mn.valueChanged.connect(self._refresh_count)
+        self._table.setCellWidget(row, 3, mn)
+
+        mx = _dbl_spin(cur_mm * 2.0)
+        mx.setEnabled(False)
+        mx.valueChanged.connect(self._refresh_count)
+        self._table.setCellWidget(row, 4, mx)
+
+        steps = QtWidgets.QSpinBox()
+        steps.setRange(2, 200)
+        steps.setValue(self._default_steps)
+        steps.setEnabled(False)
+        steps.valueChanged.connect(self._refresh_count)
+        self._table.setCellWidget(row, 5, steps)
+
+        self._rows[_MESH_PARAM_ALIAS] = {
+            "row": row, "fixed": fixed,
+            "min": mn, "max": mx, "steps": steps,
+        }
+
+        self._toggle_vary(row, 0)  # start varied — reuses its enable/highlight logic
+        self._refresh_count()
 
     def _toggle_vary(self, row: int, col: int) -> None:
         item = self._table.item(row, 0)
@@ -1619,6 +1850,44 @@ class CFDParametricPanel:
 
     # ── Phase 1: Export geometry ──────────────────────────────────────────────
 
+    def _capture_original_params(self, doc) -> dict:
+        """Snapshot current values so _export_cases can restore them afterwards."""
+        if self._mesh_param_source:
+            mesh_obj = _find_cfdof_mesh_obj(doc)
+            if mesh_obj is None:
+                return {}
+            return {_MESH_PARAM_ALIAS: _read_characteristic_length_max_mm(mesh_obj)}
+        return _get_aliases(self._sheet_obj)
+
+    def _apply_params(self, doc, params: dict) -> None:
+        """Push one sampled parameter set onto the document before export.
+
+        Also used to restore the originally-captured values afterwards —
+        same operation, just a different dict.
+        """
+        if self._mesh_param_source:
+            mesh_obj = _find_cfdof_mesh_obj(doc)
+            if mesh_obj is not None and _MESH_PARAM_ALIAS in params:
+                mesh_obj.CharacteristicLengthMax = f"{params[_MESH_PARAM_ALIAS]:.6g} mm"
+            return
+
+        # Spreadsheet-alias path (original behavior).
+        _set_aliases(self._sheet_obj, params)
+        # Force full recompute. doc.recompute() without flags only recomputes
+        # objects FreeCAD has already marked as touched. After programmatic
+        # spreadsheet changes the dependency chain may not be marked, so we
+        # explicitly touch the sheet and pass force=True so every object in
+        # the DAG is recomputed.
+        try:
+            self._sheet_obj.recompute()   # flush sheet alias values first
+        except Exception:
+            pass
+        try:
+            self._sheet_obj.touch()       # mark dependents as dirty
+        except Exception:
+            pass
+        doc.recompute(None, True, True)   # force=True, checkExternal=True
+
     def _export_cases(self) -> None:
         if self._exporting:
             return
@@ -1627,7 +1896,12 @@ class CFDParametricPanel:
         if doc is None:
             self._export_status.setText("No active document.")
             return
-        if self._sheet_obj is None:
+        if self._mesh_param_source:
+            if _find_cfdof_mesh_obj(doc) is None:
+                self._export_status.setText(
+                    "No CfdOF mesh object found — set up meshing (CfdOF) first.")
+                return
+        elif self._sheet_obj is None:
             self._export_status.setText("Select a spreadsheet first.")
             return
 
@@ -1652,29 +1926,15 @@ class CFDParametricPanel:
         self._export_progress.setMaximum(len(tasks))
         self._export_progress.setValue(0)
 
-        # Save original alias values to restore after export
-        original = _get_aliases(self._sheet_obj)
+        # Save original values to restore after export
+        original = self._capture_original_params(doc)
 
         try:
             for i, params in enumerate(tasks):
-                # 1. Push parameter values into spreadsheet
-                _set_aliases(self._sheet_obj, params)
-
-                # 2. Force full recompute.
-                # doc.recompute() without flags only recomputes objects that
-                # FreeCAD has already marked as touched.  After programmatic
-                # spreadsheet changes the dependency chain may not be marked,
-                # so we explicitly touch the sheet and pass force=True so
-                # every object in the DAG is recomputed.
-                try:
-                    self._sheet_obj.recompute()   # flush sheet alias values first
-                except Exception:
-                    pass
-                try:
-                    self._sheet_obj.touch()       # mark dependents as dirty
-                except Exception:
-                    pass
-                doc.recompute(None, True, True)   # force=True, checkExternal=True
+                # 1-2. Push this parameter set onto the document — spreadsheet
+                # aliases + recompute, or (mesh_param_source) the mesh
+                # object's CharacteristicLengthMax — and let it settle.
+                self._apply_params(doc, params)
                 QtWidgets.QApplication.processEvents()
 
                 # Re-fetch body after recompute to guarantee fresh Shape reference
@@ -1815,14 +2075,8 @@ class CFDParametricPanel:
             self._export_status.setText(f"Export failed: {exc}")
             FreeCAD.Console.PrintError(f"AI4CFD parametric export: {exc}\n")
         finally:
-            # Restore original spreadsheet values
-            _set_aliases(self._sheet_obj, original)
-            try:
-                self._sheet_obj.recompute()
-                self._sheet_obj.touch()
-            except Exception:
-                pass
-            doc.recompute(None, True, True)
+            # Restore original values
+            self._apply_params(doc, original)
             self._exporting = False
             self._export_btn.setEnabled(True)
 
@@ -1919,6 +2173,7 @@ class CFDParametricPanel:
     # ── FreeCAD protocol ──────────────────────────────────────────────────────
 
     def accept(self) -> None:
+        self._save_state()
         FreeCADGui.Control.closeDialog()
 
     def reject(self) -> None:
@@ -1955,4 +2210,11 @@ class BendPipeParametricCommand:
         return True
 
     def Activated(self) -> None:
-        FreeCADGui.Control.showDialog(CFDParametricPanel())
+        # Ensure the "CFD Parametric Study" tree object exists so the panel
+        # has a place to save/restore its configuration (see
+        # CFDParametricPanel._save_state/_restore_state) — matches the object
+        # opened when this same tree item is later double-clicked.
+        doc = FreeCAD.activeDocument() or FreeCAD.newDocument("AI4CFD")
+        from tree_objects import build_tree
+        build_tree(doc)
+        FreeCADGui.Control.showDialog(CFDParametricPanel("AI4CFD_CFDParam"))
