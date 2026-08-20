@@ -107,7 +107,19 @@ except NameError:
 # FreeCAD/FreeCADGui/Workbench as globals — so we replicate that here rather
 # than hand-porting their registration logic (keeps the vendored files
 # byte-for-byte diffable against upstream).
-if os.path.isdir(_VENDOR_CFDOF_DIR):
+#
+# Skipped entirely if a standalone CfdOF addon is also installed
+# (Mod/CfdOF/, e.g. via the Addon Manager) — FreeCAD's own Mod-folder loader
+# already execs THAT copy's InitGui.py normally, which calls
+# FreeCADGui.addPreferencePage(CfdPreferencePage, "CfdOF"). Loading our
+# vendored copy on top would call the same addPreferencePage with a second,
+# distinct CfdPreferencePage class object, and FreeCAD doesn't deduplicate
+# preference pages by category+title — only by object identity — so the
+# "CfdOF" category ends up with two "General" entries instead of one.
+_STANDALONE_CFDOF_INITGUI = os.path.join(
+    FreeCAD.getUserAppDataDir(), "Mod", "CfdOF", "InitGui.py")
+
+if os.path.isdir(_VENDOR_CFDOF_DIR) and not os.path.isfile(_STANDALONE_CFDOF_INITGUI):
     try:
         _cfdof_ns = {
             "FreeCAD": FreeCAD,
@@ -121,5 +133,10 @@ if os.path.isdir(_VENDOR_CFDOF_DIR):
         FreeCAD.Console.PrintMessage("AI4CFD: bundled CfdOF workbench registered.\n")
     except Exception as exc:
         FreeCAD.Console.PrintWarning(f"AI4CFD: bundled CfdOF failed to load: {exc}\n")
+elif os.path.isfile(_STANDALONE_CFDOF_INITGUI):
+    FreeCAD.Console.PrintMessage(
+        "AI4CFD: a standalone CfdOF addon is already installed (Mod/CfdOF) — "
+        "skipping the bundled copy to avoid duplicate registration (e.g. two "
+        "'CfdOF > General' preference pages).\n")
 
 FreeCADGui.addWorkbench(AI4CFDWorkbench())
