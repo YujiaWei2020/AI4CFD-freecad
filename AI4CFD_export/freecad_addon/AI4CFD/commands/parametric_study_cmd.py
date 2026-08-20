@@ -403,6 +403,21 @@ def _write_case_via_cfdof(doc, case_dir: str) -> bool:
         # BC values (e.g. =Spreadsheet.velocity on VelocityMag) propagate
         # correctly to the per-case 0/U after doc.recompute().
         analysis.OutputPath = case_dir
+
+        # CfdTools.getOutputPath() — called internally by CfdMeshTools and
+        # CfdCaseWriterFoam, not something we control — appends
+        # FreeCAD.ActiveDocument.Name onto whatever OutputPath we just set
+        # above if the user's CfdOF "Append document name to output path"
+        # preference is enabled (Preferences > CfdOF > General). That turns
+        # case_dir into case_dir/<document_name>/ instead of case_dir/
+        # itself, e.g. case_0001/manifold_demo/ for a document named
+        # "manifold_demo" — silently wrong for a parametric study, which
+        # needs each case written exactly where it computed. Force this
+        # preference off for the duration of the write and restore it after.
+        _cfdof_prefs = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/CfdOF")
+        _orig_append_doc_name = _cfdof_prefs.GetBool("AppendDocNameToOutputPath", False)
+        _cfdof_prefs.SetBool("AppendDocNameToOutputPath", False)
+
         FreeCAD.Console.PrintMessage(
             f"AI4CFD: writing CfdOF case → {case_dir}\n")
 
@@ -428,6 +443,7 @@ def _write_case_via_cfdof(doc, case_dir: str) -> bool:
 
         finally:
             analysis.OutputPath = orig_output_path
+            _cfdof_prefs.SetBool("AppendDocNameToOutputPath", _orig_append_doc_name)
 
     except Exception as exc:
         import traceback
